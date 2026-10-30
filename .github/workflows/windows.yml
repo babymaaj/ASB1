@@ -1,5 +1,7 @@
 name: windows-build
 on: [push, workflow_dispatch]
+permissions:
+  contents: write   # lets the screenshot step push to the ci-screenshots branch
 jobs:
   build:
     runs-on: windows-latest   # Visual Studio 2026 since June 2026; CMake picks the installed VS automatically
@@ -42,6 +44,21 @@ jobs:
           P=$(find build -name asb_probe.exe | head -1); echo "probe: $P"
           "$P" list 2>&1 | tee out/probe-log.txt
           "$P" 0 3 2>&1 | tee -a out/probe-log.txt
+      - name: UI screenshot (real Windows) -> ci-screenshots branch
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        shell: bash
+        run: |
+          E=$(find build -name editor_preview.exe | head -1)
+          "$E" ui.bmp 3000 --stream || true
+          "$E" ui-off.bmp 2500 || true
+          ls -la ui*.bmp || exit 0
+          mkdir shots && mv ui*.bmp shots/
+          cd shots
+          git init -q && git checkout -q -b ci-screenshots
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -qm "UI screenshots for ${GITHUB_SHA}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" ci-screenshots
       - name: Tests (core + state)
         shell: bash
         run: |

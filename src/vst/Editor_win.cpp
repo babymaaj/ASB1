@@ -1,12 +1,18 @@
-// Native Win32 plugin window. Flat, quiet, typographic: solid colours, 1 px hairlines, one accent that only
-// appears when something is live. No gradients, glows or skeuomorphic hardware.
+// ASB plugin window. Industrial, quiet: flat panel with a fine perforation texture, an "ASB" wordmark built from
+// rounded strokes and cut into the panel, stamped/engraved caps labels, LED-dot meters, one accent colour.
 //
-// CPU: plain GDI (rectangles + text) into a back buffer, blitted once per frame. A 30 Hz timer runs only while
-// the window is open, and a frame is drawn only when something on screen changed.
+// CPU: everything static (texture, wordmark, labels, unlit LED dots, hairlines) and the "all lit" LED layer are
+// rendered ONCE (GDI+ for anti-aliasing) into cached bitmaps. Per frame: one blit of the panel, a blit of the lit
+// part of each meter row, and plain GDI for the few moving things. 30 Hz timer only while open, and a frame is
+// drawn only when something visible changed.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #include <windowsx.h>
+#include <objidl.h>
+#include <algorithm>
+namespace Gdiplus { using std::min; using std::max; }
+#include <gdiplus.h>
 
 #include "vst/Editor.h"
 #include "vst/Controller.h"
@@ -14,15 +20,16 @@
 #include "core/Utf8.h"
 #include "public.sdk/source/vst/vsteditcontroller.h"
 
-#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
+namespace G = Gdiplus;
 
 namespace asb {
 
@@ -33,30 +40,38 @@ uint64_t editorPaintCount() { return g_paintCount.load(); }
 
 namespace {
 
-constexpr int kW = 460, kH = 272;
+constexpr int kW = 460, kH = 286;
 constexpr UINT_PTR kTimer = 1;
 constexpr UINT kFrameMs = 33;
 
 // layout
 constexpr int kPad = 24, kCol = 118, kRight = kW - kPad;
-const RECT rHeader{0, 0, kW, 58};
-const RECT rOutput{0, 59, kW, 105};
-const RECT rLevel{0, 106, kW, 152};
-const RECT rSignal{0, 153, kW, 199};
-const RECT rFader{kCol, 122, kRight - 70, 136};          // hit area; track is drawn centred in it
-const RECT rButton{kRight - 132, 216, kRight, 254};
+const RECT rHeader{0, 0, kW, 72};
+const RECT rOutput{0, 73, kW, 119};
+const RECT rLevel{0, 120, kW, 166};
+const RECT rSignal{0, 167, kW, 213};
+const RECT rFader{kCol, 136, kRight - 70, 150};
+const RECT rButton{kRight - 132, 230, kRight, 268};
 constexpr int kListRowH = 28, kListMaxRows = 7;
 
-// palette: warm near-black, off-white ink, a single accent
-const COLORREF cBg     = RGB(19, 18, 17);
-const COLORREF cLine   = RGB(44, 42, 39);
-const COLORREF cInk    = RGB(236, 232, 224);
-const COLORREF cDim    = RGB(132, 127, 119);
-const COLORREF cFaint  = RGB(70, 67, 63);
-const COLORREF cAccent = RGB(150, 205, 120);              // live
+// LED meter: two rows of dots
+constexpr int kDot = 5, kPitch = 7;
+constexpr int kMeterX = kCol, kMeterSpan = (kRight - 44) - kCol;
+constexpr int kDots = (kMeterSpan + (kPitch - kDot)) / kPitch;
+constexpr int kMeterY0 = 181, kMeterRowGap = 10;
+
+// palette
+const COLORREF cBg     = RGB(20, 20, 21);
+const COLORREF cPerf   = RGB(25, 25, 26);              // perforation dots
+const COLORREF cLine   = RGB(42, 42, 44);
+const COLORREF cInk    = RGB(232, 232, 228);
+const COLORREF cDim    = RGB(128, 128, 126);
+const COLORREF cFaint  = RGB(66, 66, 68);
+const COLORREF cAccent = RGB(150, 205, 120);
 const COLORREF cAmber  = RGB(226, 170, 72);
 const COLORREF cRed    = RGB(226, 84, 70);
-const COLORREF cPanel  = RGB(27, 26, 24);
+const COLORREF cPanel  = RGB(28, 28, 29);
+const COLORREF cDotOff = RGB(36, 36, 38);
 
 HINSTANCE moduleInstance()
 {
@@ -70,6 +85,79 @@ double levelDb(double norm) { return kMinDb + norm * (kMaxDb - kMinDb); }
 double dbOf(float lin) { return lin > 1e-6f ? 20.0 * std::log10(double(lin)) : -120.0; }
 bool inRect(const RECT& r, int x, int y) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; }
 double meterPos(double db) { return std::clamp((db + 48.0) / 51.0, 0.0, 1.0); }   // -48..+3 dB -> 0..1
+G::Color gc(COLORREF c, BYTE a = 255) { return G::Color(a, GetRValue(c), GetGValue(c), GetBValue(c)); }
+
+// colour of LED i (green, amber from -6 dB, red from 0 dB)
+COLORREF ledColor(int i)
+{
+    const double pos = (i + 0.5) / kDots;
+    if (pos >= meterPos(0.0)) return cRed;
+    if (pos >= meterPos(-6.0)) return cAmber;
+    return cAccent;
+}
+
+// GDI+ lifetime: one startup per process while any editor is open (only used to render the cached layers).
+std::atomic<int> g_gdipRefs{0};
+ULONG_PTR g_gdipToken = 0;
+void gdipAcquire() { if (g_gdipRefs.fetch_add(1) == 0) { G::GdiplusStartupInput in; G::GdiplusStartup(&g_gdipToken, &in, nullptr); } }
+void gdipRelease() { if (g_gdipRefs.fetch_sub(1) == 1) G::GdiplusShutdown(g_gdipToken); }
+
+// ---------------------------------------------------------------- wordmark
+// "ASB" built from rounded strokes on a 24 x 40 unit grid per letter (centre lines; drawn with a thick round pen).
+// The A's crossbar floats free of the legs, as a small signature detail.
+void wordmarkStrokes(G::GraphicsPath& p, G::REAL x, G::REAL y, G::REAL s)
+{
+    auto L = [&](G::REAL x0, G::REAL y0, G::REAL x1, G::REAL y1) { p.AddLine(x + x0 * s, y + y0 * s, x + x1 * s, y + y1 * s); };
+    auto A = [&](G::REAL cx, G::REAL cy, G::REAL r, G::REAL start, G::REAL sweep) {
+        p.AddArc(x + (cx - r) * s, y + (cy - r) * s, 2 * r * s, 2 * r * s, start, sweep);
+    };
+    const G::REAL r = 8;
+    // A (x 0..24)
+    p.StartFigure(); L(0, 40, 0, 12); A(12, 12, 12, 180, 180); L(24, 12, 24, 40);
+    p.StartFigure(); L(7, 27, 17, 27);
+    // S (x 34..58)
+    const G::REAL sx = 34;
+    p.StartFigure();
+    L(sx + 24, 0, sx + r, 0); A(sx + r, r, r, 270, -90); L(sx, r, sx, 20 - r); A(sx + r, 20 - r, r, 180, -90);
+    L(sx + r, 20, sx + 24 - r, 20); A(sx + 24 - r, 20 + r, r, 270, 90); L(sx + 24, 20 + r, sx + 24, 40 - r);
+    A(sx + 24 - r, 40 - r, r, 0, 90); L(sx + 24 - r, 40, sx, 40);
+    // B (x 68..92)
+    const G::REAL bx = 68;
+    p.StartFigure(); L(bx, 0, bx, 40);
+    p.StartFigure(); L(bx, 0, bx + 22 - r, 0); A(bx + 22 - r, r, r, 270, 90); L(bx + 22, r, bx + 22, 20 - r);
+    A(bx + 22 - r, 20 - r, r, 0, 90); L(bx + 22 - r, 20, bx, 20);
+    p.StartFigure(); L(bx, 20, bx + 24 - r, 20); A(bx + 24 - r, 20 + r, r, 270, 90); L(bx + 24, 20 + r, bx + 24, 40 - r);
+    A(bx + 24 - r, 40 - r, r, 0, 90); L(bx + 24 - r, 40, bx, 40);
+}
+
+// Draw the strokes "cut into" the panel: shadow lip, machined rim, recessed floor. Overlapping strokes merge because
+// each layer is a fill of the same shape at a different pen width.
+void drawEngravedWordmark(G::Graphics& g, G::REAL x, G::REAL y, G::REAL s, G::REAL stroke)
+{
+    G::GraphicsPath p;
+    wordmarkStrokes(p, x, y, s);
+    // Stroke = widen to an outline, then FILL it (winding fill merges overlapping strokes; fills are anti-aliased
+    // on every GDI+ implementation, wide-pen DrawPath is not on some).
+    auto strokePath = [&](G::REAL w, const G::Color& c, G::GraphicsPath* path) {
+        G::Pen pn(G::Color(255, 0, 0, 0), w); pn.SetStartCap(G::LineCapRound); pn.SetEndCap(G::LineCapRound); pn.SetLineJoin(G::LineJoinRound);
+        std::unique_ptr<G::GraphicsPath> o(path->Clone());
+        o->Widen(&pn, nullptr, 0.15f);
+        o->SetFillMode(G::FillModeWinding);
+        G::SolidBrush b(c);
+        g.FillPath(&b, o.get());
+    };
+    G::Matrix down; down.Translate(0, 1.2f);
+    G::GraphicsPath lo; lo.AddPath(&p, FALSE); lo.Transform(&down);
+    G::Matrix up; up.Translate(0, -1.0f);
+    G::GraphicsPath hi; hi.AddPath(&p, FALSE); hi.Transform(&up);
+    strokePath(stroke + 3.4f, G::Color(70, 255, 255, 255), &lo);   // lower lip catches light
+    strokePath(stroke + 3.4f, G::Color(255, 6, 6, 7), &hi);        // upper lip in shadow
+    strokePath(stroke + 2.2f, G::Color(255, 74, 74, 78), &p);      // machined rim
+    strokePath(stroke, G::Color(255, 13, 13, 14), &p);             // recessed floor
+    G::Matrix flo; flo.Translate(0, 1.4f);
+    G::GraphicsPath inner; inner.AddPath(&p, FALSE); inner.Transform(&flo);
+    strokePath(stroke - 2.6f, G::Color(255, 17, 17, 18), &inner);   // floor, lit from below
+}
 
 class Editor final : public EditorView {
 public:
@@ -82,22 +170,24 @@ public:
     tresult PLUGIN_API attached(void* parent, FIDString type) override
     {
         if (isPlatformTypeSupported(type) != kResultTrue || !parent) return kResultFalse;
+        gdipAcquire();
         registerClass();
         hwnd_ = CreateWindowExW(0, kClassName, L"", WS_CHILD | WS_VISIBLE, 0, 0, kW, kH,
                                 static_cast<HWND>(parent), nullptr, moduleInstance(), this);
-        if (!hwnd_) return kResultFalse;
+        if (!hwnd_) { gdipRelease(); return kResultFalse; }
         return EditorView::attached(parent, type);
     }
     tresult PLUGIN_API removed() override
     {
         if (hwnd_) { KillTimer(hwnd_, kTimer); DestroyWindow(hwnd_); hwnd_ = nullptr; }
         freeResources();
+        gdipRelease();
         return EditorView::removed();
     }
     tresult PLUGIN_API onWheel(float distance) override { nudgeLevel(distance > 0 ? 0.5 : -0.5); return kResultTrue; }
 
 private:
-    static constexpr const wchar_t* kClassName = L"ASIOStreamBridgeFlat";
+    static constexpr const wchar_t* kClassName = L"ASBPanel";
 
     static void registerClass()
     {
@@ -245,7 +335,7 @@ private:
     // ---------------------------------------------------------------- state
     struct Shown {
         int on = -1, dev = -1, status = -1, levelPos = -1, hover = -1000, list = -1, scroll = -1;
-        int barPx[2]{-1, -1}, holdPx[2]{-1, -1}, peak10 = 0, rateHz = 0, latMs = -1;
+        int lit[2]{-1, -1}, hold[2]{-1, -1}, peak10 = 0, rateHz = 0, latMs = -1;
         uint64_t drops = ~0ull;
         bool operator==(const Shown& o) const { return std::memcmp(this, &o, sizeof(Shown)) == 0; }
     };
@@ -274,39 +364,130 @@ private:
         s.status = live_ ? int(st.status) : int(std::lround(ctl_->getParamNormalized(kParamStatus) * 3.0));
         s.levelPos = int(std::lround(ctl_->getParamNormalized(kParamOutputLevel) * 660));
         s.hover = hover_; s.list = listOpen_; s.scroll = listScroll_;
-        const int span = kRight - 44 - kCol;
         for (int ch = 0; ch < 2; ++ch) {
-            s.barPx[ch] = int(std::lround(meterPos(meter_[ch]) * span));
-            s.holdPx[ch] = hold_[ch] > -48.0 ? int(std::lround(meterPos(hold_[ch]) * span)) : -1;
+            s.lit[ch] = int(std::floor(meterPos(meter_[ch]) * kDots + 0.5));
+            s.hold[ch] = hold_[ch] > -48.0 ? std::clamp(int(std::floor(meterPos(hold_[ch]) * kDots + 0.5)) - 1, 0, kDots - 1) : -1;
         }
         s.peak10 = int(std::lround(std::max(peak_, -99.0) * 10));
         if (live_) { s.rateHz = int(st.deviceRate); s.latMs = int(std::lround(st.latencyMs)); s.drops = st.underruns; }
         if (forceFrame_ || !(s == shown_)) { shown_ = s; InvalidateRect(hwnd_, nullptr, FALSE); }
     }
 
-    // ---------------------------------------------------------------- drawing (GDI only)
-    void buildResources()
+    // ---------------------------------------------------------------- cached layers
+    void makeDib(HBITMAP& bmp, HDC& dc, HGDIOBJ& old, void** bitsOut = nullptr)
     {
         HDC screen = GetDC(hwnd_);
         BITMAPINFO bi{}; bi.bmiHeader = {sizeof(BITMAPINFOHEADER), kW, -kH, 1, 32, BI_RGB};
         void* bits = nullptr;
-        backDib_ = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
-        dc_ = CreateCompatibleDC(screen);
-        oldBmp_ = SelectObject(dc_, backDib_);
+        bmp = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (bitsOut) *bitsOut = bits;
+        dc = CreateCompatibleDC(screen); old = SelectObject(dc, bmp);
         ReleaseDC(hwnd_, screen);
-        // Bahnschrift (Windows 10+, DIN-like) reads as "instrument panel"; Segoe UI as fallback.
-        const bool din = hasFont(L"Bahnschrift");
-        auto font = [&](int px, int weight, bool display) {
-            return CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
-                               display && din ? L"Bahnschrift" : L"Segoe UI");
-        };
-        fTitle_ = font(19, FW_SEMIBOLD, true);
-        fLabel_ = font(11, FW_SEMIBOLD, true);
-        fValue_ = font(15, FW_NORMAL, false);
-        fSmall_ = font(12, FW_NORMAL, false);
-        fButton_ = font(13, FW_SEMIBOLD, true);
-        fNum_ = font(13, FW_NORMAL, true);
     }
+
+    void buildResources()
+    {
+        makeDib(bgDib_, bgDc_, bgOld_, &bgBits_);
+        makeDib(litDib_, litDc_, litOld_, &litBits_);
+        makeDib(backDib_, dc_, oldBmp_);
+        const bool din = hasFont(L"Bahnschrift");
+        auto font = [&](int px, int weight, bool display, bool condensed = false) {
+            const wchar_t* face = !display || !din ? L"Segoe UI" : (condensed ? L"Bahnschrift SemiCondensed" : L"Bahnschrift");
+            return CreateFontW(-px, 0, 0, 0, weight, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, face);
+        };
+        fLabel_  = font(11, FW_BOLD, true);
+        fBrand_  = font(13, FW_NORMAL, true);
+        fValue_  = font(15, FW_NORMAL, true);
+        fSmall_  = font(12, FW_NORMAL, true);
+        fButton_ = font(13, FW_BOLD, true);
+        fNum_    = font(14, FW_NORMAL, true, true);
+        renderPanel();
+    }
+
+    // Draw anti-aliased content via an offscreen GDI+ bitmap, then composite onto a GDI DC
+    // (reliable AA on every GDI+ implementation, including Wine's).
+    // Anti-aliased drawing onto a GDI DIB: copy the pixels into a GDI+-owned bitmap, draw there, copy back.
+    // (GDI+ only anti-aliases reliably on bitmaps it owns; drawing onto an HDC or foreign memory is not smoothed by
+    // every implementation.) Runs once per window open.
+    template <class F> void aaLayer(void* bits, HDC, F&& draw)
+    {
+        GdiFlush();
+        auto* px = static_cast<uint32_t*>(bits);
+        G::Bitmap layer(kW, kH, PixelFormat32bppPARGB);
+        G::Rect all(0, 0, kW, kH);
+        G::BitmapData d;
+        if (layer.LockBits(&all, G::ImageLockModeWrite, PixelFormat32bppPARGB, &d) == G::Ok) {
+            for (int y = 0; y < kH; ++y) {
+                auto* row = reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(d.Scan0) + y * d.Stride);
+                for (int x = 0; x < kW; ++x) row[x] = px[y * kW + x] | 0xFF000000u;   // opaque panel
+            }
+            layer.UnlockBits(&d);
+        }
+        {
+            G::Graphics g(&layer);
+            g.SetSmoothingMode(G::SmoothingModeAntiAlias);
+            g.SetPixelOffsetMode(G::PixelOffsetModeHalf);
+            draw(g);
+        }
+        if (layer.LockBits(&all, G::ImageLockModeRead, PixelFormat32bppPARGB, &d) == G::Ok) {
+            for (int y = 0; y < kH; ++y)
+                std::memcpy(px + y * kW, static_cast<uint8_t*>(d.Scan0) + y * d.Stride, size_t(kW) * 4);
+            layer.UnlockBits(&d);
+        }
+    }
+
+    // Static panel + lit LED layer. Called once per window.
+    void renderPanel()
+    {
+        HDC prev = dc_;
+        dc_ = bgDc_;                                    // reuse fill/text helpers on the panel DC
+        SetBkMode(dc_, TRANSPARENT);
+        fill(RECT{0, 0, kW, kH}, cBg);
+        for (int y = 2; y < kH; y += 4)                 // fine perforation
+            for (int x = (y / 4) % 2 ? 4 : 2; x < kW; x += 4) SetPixelV(dc_, x, y, cPerf);
+        frame(RECT{0, 0, kW, kH}, RGB(10, 10, 11));
+
+        // header: wordmark, "by maai", version
+        aaLayer(bgBits_, bgDc_, [&](G::Graphics& g) { drawEngravedWordmark(g, G::REAL(kPad + 4), 15.f, 1.0f, 7.5f); });
+        engrave(RECT{kPad + 112, 16, kW, 56}, L"by maai", cDim, fBrand_, DT_LEFT | DT_BOTTOM, 1);
+        wchar_t ver[48]; swprintf(ver, 48, L"v%hs", kVersion);
+        engrave(RECT{0, 16, kRight, 56}, ver, cFaint, fSmall_, DT_RIGHT | DT_BOTTOM, 1);
+        groove(0, kW, rHeader.bottom);
+
+        stamp(rOutput, L"OUTPUT");
+        groove(kPad, kRight, rOutput.bottom);
+        stamp(rLevel, L"LEVEL");
+        groove(kPad, kRight, rLevel.bottom);
+        stamp(rSignal, L"SIGNAL");
+        groove(0, kW, rSignal.bottom);
+        // dB scale under the LEDs
+        for (double db : {-36.0, -24.0, -12.0, -6.0, 0.0}) {
+            const int x = kMeterX + int(std::lround(meterPos(db) * kDots)) * kPitch - (kPitch - kDot) / 2;
+            fill(RECT{x, kMeterY0 + 2 * kMeterRowGap - 1, x + 1, kMeterY0 + 2 * kMeterRowGap + 2}, cFaint);
+        }
+
+        // unlit LEDs on the panel, lit LEDs on the lit layer (both anti-aliased, both drawn once)
+        aaLayer(bgBits_, bgDc_, [&](G::Graphics& g) { drawLeds(g, false); });
+        BitBlt(litDc_, 0, 0, kW, kH, bgDc_, 0, 0, SRCCOPY);
+        GdiFlush();
+        aaLayer(litBits_, litDc_, [&](G::Graphics& g) { drawLeds(g, true); });
+        dc_ = prev;
+    }
+
+    void drawLeds(G::Graphics& g, bool lit)
+    {
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < kDots; ++i) {
+                const G::REAL x = G::REAL(kMeterX + i * kPitch), y = G::REAL(kMeterY0 + ch * kMeterRowGap);
+                if (!lit) {   // recessed socket
+                    G::SolidBrush rim(G::Color(255, 12, 12, 13)); g.FillEllipse(&rim, x - 0.6f, y - 0.6f, kDot + 1.2f, kDot + 1.2f);
+                    G::SolidBrush off(gc(cDotOff)); g.FillEllipse(&off, x, y + 0.3f, G::REAL(kDot), G::REAL(kDot));
+                } else {
+                    G::SolidBrush on(gc(ledColor(i))); g.FillEllipse(&on, x, y, G::REAL(kDot), G::REAL(kDot));
+                }
+            }
+    }
+
     bool hasFont(const wchar_t* face)
     {
         LOGFONTW lf{}; lf.lfCharSet = DEFAULT_CHARSET; wcsncpy(lf.lfFaceName, face, LF_FACESIZE - 1);
@@ -319,13 +500,18 @@ private:
     }
     void freeResources()
     {
-        if (dc_) { SelectObject(dc_, oldBmp_); DeleteDC(dc_); dc_ = nullptr; }
-        if (backDib_) { DeleteObject(backDib_); backDib_ = nullptr; }
-        for (HFONT* f : {&fTitle_, &fLabel_, &fValue_, &fSmall_, &fButton_, &fNum_}) if (*f) { DeleteObject(*f); *f = nullptr; }
+        auto freeDib = [](HBITMAP& b, HDC& dc, HGDIOBJ old) {
+            if (dc) { SelectObject(dc, old); DeleteDC(dc); dc = nullptr; }
+            if (b) { DeleteObject(b); b = nullptr; }
+        };
+        freeDib(bgDib_, bgDc_, bgOld_); freeDib(litDib_, litDc_, litOld_); freeDib(backDib_, dc_, oldBmp_);
+        for (HFONT* f : {&fLabel_, &fBrand_, &fValue_, &fSmall_, &fButton_, &fNum_}) if (*f) { DeleteObject(*f); *f = nullptr; }
     }
 
+    // ---------------------------------------------------------------- GDI helpers (operate on dc_)
     void fill(const RECT& r, COLORREF c) { SetDCBrushColor(dc_, c); FillRect(dc_, &r, static_cast<HBRUSH>(GetStockObject(DC_BRUSH))); }
     void hline(int x0, int x1, int y, COLORREF c) { fill(RECT{x0, y, x1, y + 1}, c); }
+    void groove(int x0, int x1, int y) { hline(x0, x1, y, RGB(9, 9, 10)); hline(x0, x1, y + 1, RGB(36, 36, 38)); }   // milled line
     void frame(const RECT& r, COLORREF c)
     {
         hline(r.left, r.right, r.top, c); hline(r.left, r.right, r.bottom - 1, c);
@@ -340,7 +526,14 @@ private:
         SelectObject(dc_, of);
         SetTextCharacterExtra(dc_, 0);
     }
-    void label(const RECT& row, const wchar_t* t) { text(RECT{kPad, row.top, kCol - 8, row.bottom}, t, cDim, fLabel_, DT_LEFT | DT_VCENTER, 2); }
+    // stamped into metal: shadow above, faint highlight below
+    void engrave(RECT r, const wchar_t* t, COLORREF c, HFONT f, UINT fmt, int tracking)
+    {
+        RECT a = r; OffsetRect(&a, 0, -1); text(a, t, RGB(6, 6, 7), f, fmt, tracking);
+        RECT b = r; OffsetRect(&b, 0, 1);  text(b, t, RGB(46, 46, 48), f, fmt, tracking);
+        text(r, t, c, f, fmt, tracking);
+    }
+    void stamp(const RECT& row, const wchar_t* t) { engrave(RECT{kPad, row.top, kCol - 8, row.bottom}, t, RGB(150, 150, 148), fLabel_, DT_LEFT | DT_VCENTER, 3); }
     void dot(int cx, int cy, int r, COLORREF c)
     {
         SetDCBrushColor(dc_, c); SetDCPenColor(dc_, c);
@@ -349,6 +542,7 @@ private:
         SelectObject(dc_, ob); SelectObject(dc_, op);
     }
 
+    // ---------------------------------------------------------------- frame
     void paint()
     {
         LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
@@ -361,65 +555,53 @@ private:
         const auto& devs = ctl_->devices();
         const std::wstring devName = (shown_.dev >= 0 && shown_.dev < int(devs.size())) ? wide(devs[size_t(shown_.dev)].name) : L"Device unavailable";
 
-        fill(RECT{0, 0, kW, kH}, cBg);
+        BitBlt(dc_, 0, 0, kW, kH, bgDc_, 0, 0, SRCCOPY);
 
-        // header: wordmark + version
-        text(RECT{kPad, 0, kW, rHeader.bottom}, L"STREAM BRIDGE", cInk, fTitle_, DT_LEFT | DT_VCENTER, 3);
-        wchar_t ver[48]; swprintf(ver, 48, L"v%hs", kVersion);
-        text(RECT{0, 0, kRight, rHeader.bottom}, ver, cFaint, fSmall_, DT_RIGHT | DT_VCENTER);
-        hline(0, kW, rHeader.bottom, cLine);
-
-        // OUTPUT
-        label(rOutput, L"OUTPUT");
-        if (shown_.hover == kHoverOutput && !listOpen_) fill(RECT{kCol - 10, rOutput.top + 7, kRight + 4, rOutput.bottom - 7}, cPanel);
-        text(RECT{kCol, rOutput.top, kRight - 22, rOutput.bottom}, devName.c_str(), cInk, fValue_, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
-        {   // chevron
-            const int cx = kRight - 6, cy = (rOutput.top + rOutput.bottom) / 2;
-            for (int i = 0; i < 4; ++i) hline(cx - 4 + i, cx + 4 - i, cy - 1 + i, cDim);
-        }
-        hline(kPad, kRight, rOutput.bottom, cLine);
-
-        // LEVEL: flat fader
-        label(rLevel, L"LEVEL");
-        {
-            const double v = shown_.levelPos / 660.0;
-            const int cy = (rFader.top + rFader.bottom) / 2;
-            const int x = rFader.left + int(std::lround(v * (rFader.right - rFader.left)));
-            fill(RECT{rFader.left, cy - 1, rFader.right, cy + 1}, cFaint);
-            fill(RECT{rFader.left, cy - 1, x, cy + 1}, on ? cAccent : cDim);
-            const int zx = rFader.left + int(std::lround(60.0 / 66.0 * (rFader.right - rFader.left)));   // 0 dB mark
-            fill(RECT{zx, cy - 6, zx + 1, cy - 3}, cDim);
-            const bool hot = dragging_ || shown_.hover == kHoverFader;
-            fill(RECT{x - 3, cy - 8, x + 3, cy + 8}, hot ? RGB(255, 252, 245) : cInk);
-            wchar_t vt[32];
-            if (shown_.levelPos <= 0) swprintf(vt, 32, L"-∞ dB"); else swprintf(vt, 32, L"%+.1f dB", levelDb(v));
-            text(RECT{kRight - 64, rLevel.top, kRight, rLevel.bottom}, vt, cInk, fNum_, DT_RIGHT | DT_VCENTER);
-        }
-        hline(kPad, kRight, rLevel.bottom, cLine);
-
-        // SIGNAL: what goes to the stream, L/R
-        label(rSignal, L"SIGNAL");
-        {
-            const int span = kRight - 44 - kCol;
-            const int warnX = kCol + int(std::lround(meterPos(-6.0) * span)), clipX = kCol + int(std::lround(meterPos(0.0) * span));
-            for (int ch = 0; ch < 2; ++ch) {
-                const int y = rSignal.top + 16 + ch * 9;
-                fill(RECT{kCol, y, kCol + span, y + 4}, cPanel);
-                const int px = shown_.barPx[ch];
-                if (px > 0) {
-                    fill(RECT{kCol, y, std::min(kCol + px, warnX), y + 4}, cAccent);
-                    if (kCol + px > warnX) fill(RECT{warnX, y, std::min(kCol + px, clipX), y + 4}, cAmber);
-                    if (kCol + px > clipX) fill(RECT{clipX, y, kCol + px, y + 4}, cRed);
-                }
-                if (shown_.holdPx[ch] > 0) fill(RECT{kCol + shown_.holdPx[ch] - 1, y, kCol + shown_.holdPx[ch] + 1, y + 4}, cInk);
+        // LEDs: copy the lit part of each row from the lit layer, plus the peak-hold LED
+        for (int ch = 0; ch < 2; ++ch) {
+            const int y = kMeterY0 + ch * kMeterRowGap - 1;
+            const int n = std::clamp(shown_.lit[ch], 0, kDots);
+            if (n > 0) BitBlt(dc_, kMeterX - 1, y, n * kPitch, kDot + 2, litDc_, kMeterX - 1, y, SRCCOPY);
+            if (shown_.hold[ch] >= n) {
+                const int hx = kMeterX + shown_.hold[ch] * kPitch - 1;
+                BitBlt(dc_, hx, y, kDot + 2, kDot + 2, litDc_, hx, y, SRCCOPY);
             }
+        }
+        {
             wchar_t pk[16];
             if (!live_ || shown_.peak10 <= -480) swprintf(pk, 16, L"–"); else swprintf(pk, 16, L"%.1f", shown_.peak10 / 10.0);
             text(RECT{kRight - 40, rSignal.top, kRight, rSignal.bottom}, pk, shown_.peak10 > 0 && live_ ? cRed : cDim, fNum_, DT_RIGHT | DT_VCENTER);
         }
-        hline(0, kW, rSignal.bottom, cLine);
 
-        // footer: status (left), stream button (right)
+        // OUTPUT
+        if (shown_.hover == kHoverOutput && !listOpen_) fill(RECT{kCol - 10, rOutput.top + 8, kRight + 4, rOutput.bottom - 7}, cPanel);
+        text(RECT{kCol, rOutput.top, kRight - 22, rOutput.bottom}, devName.c_str(), cInk, fValue_, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+        {
+            const int cx = kRight - 6, cy = (rOutput.top + rOutput.bottom) / 2;
+            for (int i = 0; i < 4; ++i) hline(cx - 4 + i, cx + 4 - i, cy - 1 + i, cDim);
+        }
+
+        // LEVEL: flat fader with a machined slot
+        {
+            const double v = shown_.levelPos / 660.0;
+            const int cy = (rFader.top + rFader.bottom) / 2;
+            const int x = rFader.left + int(std::lround(v * (rFader.right - rFader.left)));
+            hline(rFader.left, rFader.right, cy - 1, RGB(8, 8, 9));
+            hline(rFader.left, rFader.right, cy, cFaint);
+            hline(rFader.left, rFader.right, cy + 1, RGB(38, 38, 40));
+            fill(RECT{rFader.left, cy - 1, x, cy + 1}, on ? cAccent : cDim);
+            const int zx = rFader.left + int(std::lround(60.0 / 66.0 * (rFader.right - rFader.left)));   // 0 dB mark
+            fill(RECT{zx, cy - 7, zx + 1, cy - 4}, cDim);
+            const bool hot = dragging_ || shown_.hover == kHoverFader;
+            fill(RECT{x - 4, cy - 9, x + 4, cy + 9}, RGB(10, 10, 11));
+            fill(RECT{x - 3, cy - 8, x + 3, cy + 8}, hot ? RGB(250, 250, 246) : RGB(206, 206, 202));
+            hline(x - 3, x + 3, cy, RGB(70, 70, 72));                       // grip line
+            wchar_t vt[32];
+            if (shown_.levelPos <= 0) swprintf(vt, 32, L"-∞ dB"); else swprintf(vt, 32, L"%+.1f dB", levelDb(v));
+            text(RECT{kRight - 64, rLevel.top, kRight, rLevel.bottom}, vt, cInk, fNum_, DT_RIGHT | DT_VCENTER);
+        }
+
+        // footer: status + stream button
         {
             COLORREF dc = cFaint; const wchar_t* head = L"Off";
             wchar_t sub[160] = L"";
@@ -435,18 +617,19 @@ private:
                 else swprintf(sub, 160, L"FL output is untouched");
                 break;
             }
-            dot(kPad + 4, 229, 4, dc);
-            text(RECT{kPad + 16, 218, rButton.left - 12, 240}, head, cInk, fValue_, DT_LEFT | DT_VCENTER);
-            text(RECT{kPad + 16, 238, rButton.left - 12, 256}, sub, cDim, fSmall_, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+            dot(kPad + 4, 243, 4, dc);
+            text(RECT{kPad + 16, 232, rButton.left - 12, 254}, head, cInk, fValue_, DT_LEFT | DT_VCENTER);
+            text(RECT{kPad + 16, 252, rButton.left - 12, 270}, sub, cDim, fSmall_, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
 
             const bool hot = shown_.hover == kHoverButton;
             if (on) {
                 fill(rButton, hot ? RGB(170, 222, 140) : cAccent);
-                text(rButton, L"STREAMING", RGB(16, 22, 12), fButton_, DT_CENTER | DT_VCENTER, 2);
+                text(rButton, L"STREAMING", RGB(16, 22, 12), fButton_, DT_CENTER | DT_VCENTER, 3);
             } else {
-                if (hot) fill(rButton, cPanel);
+                fill(rButton, hot ? RGB(34, 34, 36) : cPanel);
                 frame(rButton, hot ? cDim : cFaint);
-                text(rButton, L"START STREAM", cInk, fButton_, DT_CENTER | DT_VCENTER, 2);
+                hline(rButton.left + 1, rButton.right - 1, rButton.top + 1, RGB(48, 48, 50));   // top bevel
+                text(rButton, L"START STREAM", cInk, fButton_, DT_CENTER | DT_VCENTER, 3);
             }
         }
 
@@ -460,10 +643,10 @@ private:
                 const int di = i + listScroll_;
                 const RECT row{r.left + 1, r.top + 4 + i * kListRowH, r.right - 1, r.top + 4 + (i + 1) * kListRowH};
                 const bool sel = di == shown_.dev, hov = di == shown_.hover;
-                if (hov) fill(row, RGB(38, 36, 33));
+                if (hov) fill(row, RGB(38, 38, 40));
                 if (sel) fill(RECT{row.left, row.top + 6, row.left + 2, row.bottom - 6}, cAccent);
                 text(RECT{row.left + 12, row.top, row.right - 12, row.bottom}, wide(devs[size_t(di)].name).c_str(),
-                     sel ? cInk : RGB(200, 195, 186), fValue_, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
+                     sel ? cInk : RGB(196, 196, 192), fValue_, DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS);
             }
             if (maxScroll() > 0) {
                 const int h = r.bottom - r.top - 8, th = h * kListMaxRows / deviceCount();
@@ -482,10 +665,11 @@ private:
 
     Controller* ctl_;
     HWND hwnd_ = nullptr;
-    HBITMAP backDib_ = nullptr;
-    HDC dc_ = nullptr;
-    HGDIOBJ oldBmp_ = nullptr;
-    HFONT fTitle_ = nullptr, fLabel_ = nullptr, fValue_ = nullptr, fSmall_ = nullptr, fButton_ = nullptr, fNum_ = nullptr;
+    HBITMAP bgDib_ = nullptr, litDib_ = nullptr, backDib_ = nullptr;
+    void* bgBits_ = nullptr; void* litBits_ = nullptr;
+    HDC bgDc_ = nullptr, litDc_ = nullptr, dc_ = nullptr;
+    HGDIOBJ bgOld_ = nullptr, litOld_ = nullptr, oldBmp_ = nullptr;
+    HFONT fLabel_ = nullptr, fBrand_ = nullptr, fValue_ = nullptr, fSmall_ = nullptr, fButton_ = nullptr, fNum_ = nullptr;
     Shown shown_{};
     bool live_ = false, forceFrame_ = true, dragging_ = false, listOpen_ = false, tracking_ = false;
     int listScroll_ = 0, hover_ = kHoverNone, lastDragX_ = 0;

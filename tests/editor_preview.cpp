@@ -106,7 +106,7 @@ int main(int argc, char** argv)
     ViewRect vr; view->getSize(&vr);
     RECT wr{0, 0, vr.getWidth(), vr.getHeight()};
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
-    HWND frame = CreateWindowExW(0, L"STATIC", L"ASIO Stream Bridge (preview)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+    HWND frame = CreateWindowExW(0, L"STATIC", L"ASB (preview)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                  100, 100, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (view->attached(frame, kPlatformTypeHWND) != kResultOk) { std::printf("attach failed\n"); return 1; }
 

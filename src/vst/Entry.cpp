@@ -9,14 +9,14 @@ using namespace Steinberg::Vst;
 bool InitModule() { return true; }
 bool DeinitModule() { return true; }
 
-BEGIN_FACTORY_DEF("ASIO Stream Bridge Project", "https://example.invalid", "mailto:nobody@example.invalid")
+BEGIN_FACTORY_DEF("maai", "https://maai.lol", "")
 
 DEF_CLASS2(INLINE_UID_FROM_FUID(asb::kProcessorUID), PClassInfo::kManyInstances, kVstAudioEffectClass,
            asb::kPluginName, Vst::kDistributable, Vst::PlugType::kFx, asb::kVersion, kVstVersionString,
            asb::Processor::createInstance)
 
 DEF_CLASS2(INLINE_UID_FROM_FUID(asb::kControllerUID), PClassInfo::kManyInstances, kVstComponentControllerClass,
-           "ASIO Stream Bridge Controller", 0, "", asb::kVersion, kVstVersionString,
+           "ASB Controller", 0, "", asb::kVersion, kVstVersionString,
            asb::Controller::createInstance)
 
 END_FACTORY
