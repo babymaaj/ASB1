@@ -1,13 +1,17 @@
 # Changelog
 
 ## 0.4.0-alpha (2026-10-30)
-* **New window design**: flat and quiet. Solid warm-black panel, 1 px hairlines, Bahnschrift/Segoe UI type, one green
-  accent that only shows when live. Rows: OUTPUT (click for device list, wheel to step), LEVEL (flat fader: drag,
-  shift-drag fine, wheel, double-click = 0 dB), SIGNAL (L/R meter of what goes to the stream, peak hold + readout),
-  status line, big START STREAM / STREAMING button. Plain GDI only (no GDI+).
+* **Renamed: "ASB" by maai** (vendor maai, maai.lol). Same plugin ID, so existing projects still load it.
+  (The bundle is still `ASIOStreamBridge.vst3`; replace the old folder when updating.)
+* **New window design**, industrial and quiet: fine perforated panel, custom "ASB" wordmark built from rounded strokes
+  and cut into the panel (white S face), stamped/engraved caps labels (Bahnschrift), milled divider lines,
+  LED-dot SIGNAL meter (L/R, green/amber/red, peak-hold LED + readout), flat level fader (drag, shift-drag fine, wheel,
+  double-click = 0 dB), device list, START STREAM / STREAMING button.
 * **Peak metering** in the engine (`meterPlanar`, ~0.1 µs per 256-sample block on the audio thread).
-* CPU: a UI frame costs ~0.75 ms under Wine (the earlier GDI+ draft cost ~23 ms); 30 Hz timer only while the window is
-  open, and frames are drawn only when something visible changed.
+* CPU: everything static (and the "all lit" LED layer) is rendered once per window open; a frame is a few blits plus
+  plain GDI text (~0.7 ms under Wine; an earlier all-GDI+ draft cost ~23 ms). 30 Hz timer only while open, and frames
+  are drawn only when something visible changed.
+* CI pushes real-Windows screenshots of the window to the `ci-screenshots` branch.
 
 ## 0.3.0-alpha (2026-10-30)
 * **Plugin window** (Windows, native Win32, no UI framework): Streaming on/off button, Output device dropdown (Unicode names),

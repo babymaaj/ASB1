@@ -105,7 +105,8 @@ void gdipRelease() { if (g_gdipRefs.fetch_sub(1) == 1) G::GdiplusShutdown(g_gdip
 // ---------------------------------------------------------------- wordmark
 // "ASB" built from rounded strokes on a 24 x 40 unit grid per letter (centre lines; drawn with a thick round pen).
 // The A's crossbar floats free of the legs, as a small signature detail.
-void wordmarkStrokes(G::GraphicsPath& p, G::REAL x, G::REAL y, G::REAL s)
+enum : int { kLetterA = 1, kLetterS = 2, kLetterB = 4 };
+void wordmarkStrokes(G::GraphicsPath& p, G::REAL x, G::REAL y, G::REAL s, int letters)
 {
     auto L = [&](G::REAL x0, G::REAL y0, G::REAL x1, G::REAL y1) { p.AddLine(x + x0 * s, y + y0 * s, x + x1 * s, y + y1 * s); };
     auto A = [&](G::REAL cx, G::REAL cy, G::REAL r, G::REAL start, G::REAL sweep) {
@@ -113,29 +114,37 @@ void wordmarkStrokes(G::GraphicsPath& p, G::REAL x, G::REAL y, G::REAL s)
     };
     const G::REAL r = 8;
     // A (x 0..24)
+    if (letters & kLetterA) {
     p.StartFigure(); L(0, 40, 0, 12); A(12, 12, 12, 180, 180); L(24, 12, 24, 40);
     p.StartFigure(); L(7, 27, 17, 27);
+    }
     // S (x 34..58)
     const G::REAL sx = 34;
+    if (letters & kLetterS) {
     p.StartFigure();
     L(sx + 24, 0, sx + r, 0); A(sx + r, r, r, 270, -90); L(sx, r, sx, 20 - r); A(sx + r, 20 - r, r, 180, -90);
     L(sx + r, 20, sx + 24 - r, 20); A(sx + 24 - r, 20 + r, r, 270, 90); L(sx + 24, 20 + r, sx + 24, 40 - r);
     A(sx + 24 - r, 40 - r, r, 0, 90); L(sx + 24 - r, 40, sx, 40);
+    }
     // B (x 68..92)
     const G::REAL bx = 68;
+    if (letters & kLetterB) {
     p.StartFigure(); L(bx, 0, bx, 40);
     p.StartFigure(); L(bx, 0, bx + 22 - r, 0); A(bx + 22 - r, r, r, 270, 90); L(bx + 22, r, bx + 22, 20 - r);
     A(bx + 22 - r, 20 - r, r, 0, 90); L(bx + 22 - r, 20, bx, 20);
     p.StartFigure(); L(bx, 20, bx + 24 - r, 20); A(bx + 24 - r, 20 + r, r, 270, 90); L(bx + 24, 20 + r, bx + 24, 40 - r);
     A(bx + 24 - r, 40 - r, r, 0, 90); L(bx + 24 - r, 40, bx, 40);
+    }
 }
 
 // Draw the strokes "cut into" the panel: shadow lip, machined rim, recessed floor. Overlapping strokes merge because
 // each layer is a fill of the same shape at a different pen width.
-void drawEngravedWordmark(G::Graphics& g, G::REAL x, G::REAL y, G::REAL s, G::REAL stroke)
+// face: recessed dark floor by default; the S gets a white face (same rim), as the brand accent.
+void drawEngravedWordmark(G::Graphics& g, G::REAL x, G::REAL y, G::REAL s, G::REAL stroke, int letters,
+                          G::Color floor = G::Color(255, 13, 13, 14), G::Color floorLit = G::Color(255, 17, 17, 18))
 {
     G::GraphicsPath p;
-    wordmarkStrokes(p, x, y, s);
+    wordmarkStrokes(p, x, y, s, letters);
     // Stroke = widen to an outline, then FILL it (winding fill merges overlapping strokes; fills are anti-aliased
     // on every GDI+ implementation, wide-pen DrawPath is not on some).
     auto strokePath = [&](G::REAL w, const G::Color& c, G::GraphicsPath* path) {
@@ -153,10 +162,10 @@ void drawEngravedWordmark(G::Graphics& g, G::REAL x, G::REAL y, G::REAL s, G::RE
     strokePath(stroke + 3.4f, G::Color(70, 255, 255, 255), &lo);   // lower lip catches light
     strokePath(stroke + 3.4f, G::Color(255, 6, 6, 7), &hi);        // upper lip in shadow
     strokePath(stroke + 2.2f, G::Color(255, 74, 74, 78), &p);      // machined rim
-    strokePath(stroke, G::Color(255, 13, 13, 14), &p);             // recessed floor
+    strokePath(stroke, floor, &p);                                  // face / recessed floor
     G::Matrix flo; flo.Translate(0, 1.4f);
     G::GraphicsPath inner; inner.AddPath(&p, FALSE); inner.Transform(&flo);
-    strokePath(stroke - 2.6f, G::Color(255, 17, 17, 18), &inner);   // floor, lit from below
+    strokePath(stroke - 2.6f, floorLit, &inner);                    // inset shading
 }
 
 class Editor final : public EditorView {
@@ -448,10 +457,14 @@ private:
         frame(RECT{0, 0, kW, kH}, RGB(10, 10, 11));
 
         // header: wordmark, "by maai", version
-        aaLayer(bgBits_, bgDc_, [&](G::Graphics& g) { drawEngravedWordmark(g, G::REAL(kPad + 4), 15.f, 1.0f, 7.5f); });
+        aaLayer(bgBits_, bgDc_, [&](G::Graphics& g) {
+            const G::REAL wx = G::REAL(kPad + 4), wy = 15.f, ws = 1.0f, wst = 7.5f;
+            drawEngravedWordmark(g, wx, wy, ws, wst, kLetterA | kLetterB);
+            drawEngravedWordmark(g, wx, wy, ws, wst, kLetterS, G::Color(255, 214, 214, 210), G::Color(255, 240, 240, 236));
+        });
         engrave(RECT{kPad + 112, 16, kW, 56}, L"by maai", cDim, fBrand_, DT_LEFT | DT_BOTTOM, 1);
         wchar_t ver[48]; swprintf(ver, 48, L"v%hs", kVersion);
-        engrave(RECT{0, 16, kRight, 56}, ver, cFaint, fSmall_, DT_RIGHT | DT_BOTTOM, 1);
+        engrave(RECT{0, 16, kRight, 56}, ver, cFaint, fSmall_, DT_RIGHT | DT_BOTTOM, 0);
         groove(0, kW, rHeader.bottom);
 
         stamp(rOutput, L"OUTPUT");

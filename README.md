@@ -1,4 +1,4 @@
-# ASIO Stream Bridge (alpha 0.4.0)
+# ASB — ASIO Stream Bridge, by maai (alpha 0.4.0)
 
 A small VST3 "audio splitter" for FL Studio. Put it on the **master bus**: audio passes through untouched
 (bit-exact, zero added delay) while a copy is sent through a lock-free ring buffer to a worker thread that
