@@ -105,6 +105,7 @@ if(ASB_BUILD_VST3)
   # The SDK's AU wrapper hosts a copy of ASB.vst3 inside ASB.component: same engine, same window.
   if(APPLE AND XCODE)
     set(public_sdk_SOURCE_DIR "${ASB_VST3_SDK_PATH}/public.sdk")
+    list(APPEND CMAKE_MODULE_PATH "${ASB_VST3_SDK_PATH}/cmake/modules")
     include(SMTG_AddVST3AuV2)
     if(SMTG_ENABLE_AUV2_BUILDS)
       math(EXPR ASB_AU_VERSION "(${PROJECT_VERSION_MAJOR} << 16) | (${PROJECT_VERSION_MINOR} << 8) | ${PROJECT_VERSION_PATCH}")
