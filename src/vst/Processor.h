@@ -22,11 +22,14 @@ public:
     Steinberg::tresult PLUGIN_API process(Steinberg::Vst::ProcessData& data) override;
     Steinberg::tresult PLUGIN_API setState(Steinberg::IBStream* state) override;
     Steinberg::tresult PLUGIN_API getState(Steinberg::IBStream* state) override;
+    Steinberg::tresult PLUGIN_API connect(Steinberg::Vst::IConnectionPoint* other) override;
+    Steinberg::tresult PLUGIN_API disconnect(Steinberg::Vst::IConnectionPoint* other) override;
 
     // test/benchmark hook
     StreamEngine& engine() { return engine_; }
 
 private:
+    void sendEngineLink(bool attach);
     template <class T> void passAndStream(Steinberg::Vst::ProcessData& d, T* const* in, T* const* out) noexcept;
     void applyParam(Steinberg::Vst::ParamID id, double v) noexcept;
 

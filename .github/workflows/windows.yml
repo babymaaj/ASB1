@@ -68,7 +68,7 @@ jobs:
         run: |
           mkdir -p out
           cp -r build/VST3/Release/ASIOStreamBridge.vst3 out/ 2>/dev/null || true
-          for exe in asb_probe core_tests; do
+          for exe in asb_probe core_tests editor_preview; do
             f=$(find build -name "$exe.exe" -path "*Release*" | head -1)
             [ -n "$f" ] && cp "$f" out/ || echo "::warning::$exe.exe not found"
           done
@@ -79,6 +79,7 @@ jobs:
                                      asb_probe.exe list         (shows output devices + numbers)
                                      asb_probe.exe 2 8          (plays a quiet tone to device 2 for 8 s)
           core_tests.exe         = self-test; should end with ALL PASSED.
+          editor_preview.exe     = opens the plugin window without FL (try: editor_preview.exe --stream)
           *-log.txt              = build logs (send these if something fails).
           TXT
           echo "::notice title=Packaged files::$(cd out && find . -type f | sort | tr '\n' ' ')"

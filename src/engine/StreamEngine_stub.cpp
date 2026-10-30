@@ -8,8 +8,11 @@
 #include <mutex>
 #include <thread>
 #include <ctime>
+#include <unistd.h>
 
 namespace asb {
+
+int64_t currentProcessId() { return int64_t(getpid()); }
 
 std::vector<DeviceInfo> enumerateRenderDevices() { return { {"", "System default (stub)"} }; }
 
@@ -76,6 +79,7 @@ StreamStats StreamEngine::stats() const noexcept
     s.workerCpuMs = cpuMs_.load();
     s.deviceFrames = devFrames_.load();
     s.resyncs = resyncs_.load();
+    { const double hr = hostRate_.load(); s.latencyMs = hr > 0 ? double(ring_.readableFrames()) * 1000.0 / hr : 0.0; }
     return s;
 }
 

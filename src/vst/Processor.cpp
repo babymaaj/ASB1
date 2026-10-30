@@ -1,6 +1,8 @@
 #include "vst/Processor.h"
 #include "vst/Ids.h"
 #include "vst/State.h"
+#include "vst/EngineLink.h"
+#include "pluginterfaces/vst/ivstmessage.h"
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vstspeaker.h"
@@ -138,6 +140,32 @@ tresult PLUGIN_API Processor::process(ProcessData& data)
         if (auto* q = data.outputParameterChanges->addParameterData(kParamStatus, idx)) q->addPoint(0, static_cast<int>(s.status) / 3.0, idx);
     }
     return kResultOk;
+}
+
+// Give the controller (editor) read-only access to engine stats. Main thread only. The controller ignores the
+// pointer unless it is in the same process (hosts that bridge plugins into another process just get no live meter).
+void Processor::sendEngineLink(bool attach)
+{
+    IMessage* m = allocateMessage();
+    if (!m) return;
+    m->setMessageID(kEngineLinkMsg);
+    m->getAttributes()->setInt(kEngineLinkPtr, attach ? int64(reinterpret_cast<intptr_t>(&engine_)) : 0);
+    m->getAttributes()->setInt(kEngineLinkPid, currentProcessId());
+    sendMessage(m);
+    m->release();
+}
+
+tresult PLUGIN_API Processor::connect(IConnectionPoint* other)
+{
+    const tresult r = AudioEffect::connect(other);
+    if (r == kResultOk) sendEngineLink(true);
+    return r;
+}
+
+tresult PLUGIN_API Processor::disconnect(IConnectionPoint* other)
+{
+    sendEngineLink(false);   // before the link goes away
+    return AudioEffect::disconnect(other);
 }
 
 tresult PLUGIN_API Processor::setState(IBStream* state)

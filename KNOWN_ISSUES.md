@@ -7,7 +7,7 @@ and fixed: stuck high latency after a device stall, and underruns with big ASIO 
 Still open:
 1. **Never run on a real PC with audio hardware / in FL Studio.** It builds and validates on real Windows (CI), but the CI
    machine has no sound devices, so actual output to a device is only proven under Wine.
-2. **No custom UI.** Host-generic parameters only.
+2. Plugin window is Windows-only and fixed-size (no DPI scaling yet: may look small on 150 %+ displays).
 3. Device list only refreshed when the plugin instance is created (reopen the plugin to see a newly plugged device).
 4. "System default" is resolved when the device opens; a default-device change while streaming is not followed
    (needs `IMMNotificationClient`).

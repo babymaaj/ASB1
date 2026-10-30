@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0-alpha (2026-10-30)
+* **Plugin window** (Windows, native Win32, no UI framework): Streaming on/off button, Output device dropdown (Unicode names),
+  Level slider with dB readout (automation-friendly begin/perform/end edits), live status (device rate, ms buffered),
+  buffer meter, dropout/resync counters. Follows automation and project loads (10 Hz refresh). Dark dropdown on Windows 10+.
+* Live stats come straight from the engine via a processor→controller message (same-process only; otherwise falls back
+  to the read-only Status/Buffer Health parameters).
+* `StreamStats.latencyMs` (audio currently buffered).
+* `editor_preview.exe` (Windows): opens the plugin window without a DAW, streaming a test tone; `--stream` to start on.
+
 ## 0.2.0-alpha (2026-10-30, Maaj session)
 Built on OX's 0.1.0. Everything below is covered by tests; see TEST_RESULTS.md.
 

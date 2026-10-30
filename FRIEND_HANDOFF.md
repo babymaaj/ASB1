@@ -12,7 +12,7 @@ under Wine. **Not yet run on a real Windows PC / MSVC.** What changed: `CHANGELO
 4. **OBS/Discord** via a virtual cable (VB-Cable etc.).
 5. **Default-device following**: `IMMNotificationClient` in `StreamEngine_win.cpp` (KNOWN_ISSUES #4).
 6. **Bypass decision** (KNOWN_ISSUES #13).
-7. **Minimal UI**: raw Win32 `IPlugView` (combo, checkbox, trackbar, 2 labels, 10 Hz timer reading `engine.stats()`) or VSTGUI.
+7. **UI polish**: window exists (`src/vst/Editor_win.cpp`, preview with `editor_preview.exe`). Next: DPI scaling, refresh device list button.
 8. **Benchmark vs Voxengo Recorder** under identical conditions.
 9. Installer, signing.
 

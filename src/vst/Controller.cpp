@@ -4,6 +4,11 @@
 #include "vst/Ids.h"
 #include "vst/State.h"
 #include "core/Utf8.h"
+#include "vst/EngineLink.h"
+#include "vst/Editor.h"
+#include "pluginterfaces/vst/ivstmessage.h"
+#include "pluginterfaces/gui/iplugview.h"
+#include <cstring>
 #include "engine/StreamEngine.h"
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/base/ustring.h"
@@ -96,6 +101,47 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state)
     if (auto* p = static_cast<DeviceParam*>(parameters.getParameter(kParamDevice)))
         setParamNormalized(kParamDevice, p->toNormalized(resolveSavedDevice(st, p->devices())));
     return kResultOk;
+}
+
+tresult PLUGIN_API Controller::notify(IMessage* message)
+{
+    if (message && message->getMessageID() && std::strcmp(message->getMessageID(), kEngineLinkMsg) == 0) {
+        int64 ptr = 0, pid = 0;
+        auto* a = message->getAttributes();
+        if (a && a->getInt(kEngineLinkPtr, ptr) == kResultOk && a->getInt(kEngineLinkPid, pid) == kResultOk)
+            engine_.store(pid == currentProcessId() ? reinterpret_cast<const StreamEngine*>(intptr_t(ptr)) : nullptr);
+        return kResultOk;
+    }
+    return EditController::notify(message);
+}
+
+IPlugView* PLUGIN_API Controller::createView(FIDString name)
+{
+    if (name && std::strcmp(name, ViewType::kEditor) == 0) return createEditor(this);
+    return nullptr;
+}
+
+const std::vector<DeviceInfo>& Controller::devices() const
+{
+    static const std::vector<DeviceInfo> none;
+    auto* p = static_cast<DeviceParam*>(const_cast<ParameterContainer&>(parameters).getParameter(kParamDevice));
+    return p ? p->devices() : none;
+}
+
+bool Controller::liveStats(StreamStats& out) const
+{
+    const StreamEngine* e = engine_.load();
+    if (!e) return false;
+    out = e->stats();
+    return true;
+}
+
+void Controller::editParam(ParamID id, ParamValue v)
+{
+    beginEdit(id);
+    setParamNormalized(id, v);
+    performEdit(id, v);
+    endEdit(id);
 }
 
 } // namespace asb

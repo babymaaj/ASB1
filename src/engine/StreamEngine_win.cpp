@@ -71,6 +71,8 @@ double threadCpuMs()
 
 } // namespace
 
+int64_t currentProcessId() { return int64_t(GetCurrentProcessId()); }
+
 std::vector<DeviceInfo> enumerateRenderDevices()
 {
     std::vector<DeviceInfo> out;
@@ -185,6 +187,7 @@ StreamStats StreamEngine::stats() const noexcept
     s.workerCpuMs = cpuMs_.load();
     s.deviceFrames = devFrames_.load();
     s.resyncs = resyncs_.load();
+    { const double hr = hostRate_.load(); s.latencyMs = hr > 0 ? double(ring_.readableFrames()) * 1000.0 / hr : 0.0; }
     return s;
 }
 

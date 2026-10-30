@@ -1,4 +1,4 @@
-# ASIO Stream Bridge (alpha 0.2.0)
+# ASIO Stream Bridge (alpha 0.3.0)
 
 A small VST3 "audio splitter" for FL Studio. Put it on the **master bus**: audio passes through untouched
 (bit-exact, zero added delay) while a copy is sent through a lock-free ring buffer to a worker thread that
@@ -26,7 +26,9 @@ It has **still never run on a PC with real audio hardware, in FL Studio or with 
 | `tests/processor_bench.cpp` | Drives the Processor directly: passthrough exactness, per-block cost, worker CPU |
 | `third_party/vst3sdk` | Steinberg VST3 SDK 3.8.1 (MIT) — git-ignored, clone it (see BUILD_INSTRUCTIONS.md) |
 
-## Parameters (host generic UI; no custom editor yet)
+## Window & parameters
+On Windows the plugin has its own window: Streaming on/off, Output device, Level, live status and buffer meter.
+
 Streaming (on/off), Output Level (-60…+6 dB, applied to stream path only), Output Device (list; 0 = system default),
 Buffer Health + Status (read-only meters). State (enable/level/device, saved by its Windows endpoint ID) is saved with the project; 0.1.0 projects still load.
 

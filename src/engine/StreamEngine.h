@@ -19,6 +19,8 @@ struct DeviceInfo {
     std::string name;         // friendly name
 };
 
+int64_t currentProcessId();   // platform helper (used to validate in-process links)
+
 // Deterministic order shared by controller + engine: [0]=system default, then by id.
 std::vector<DeviceInfo> enumerateRenderDevices();
 
@@ -49,6 +51,7 @@ struct StreamStats {
     float    workerCpuMs = 0.f;    // cumulative worker CPU ms (thread time), for benchmarking
     uint64_t deviceFrames = 0;     // total frames handed to the output device (diagnostic)
     uint64_t resyncs = 0;          // times the stream jumped back to target latency after a stall
+    double   latencyMs = 0.0;      // audio currently buffered (ring), in ms; excludes the device's own buffer
 };
 
 class StreamEngine {
