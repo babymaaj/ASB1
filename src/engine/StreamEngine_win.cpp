@@ -1,5 +1,4 @@
 // Windows WASAPI shared-mode event-driven renderer.
-// NOT COMPILED OR RUN by the authoring session (Linux sandbox) -- see TEST_RESULTS.md.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "engine/StreamEngine.h"

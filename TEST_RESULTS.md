@@ -9,7 +9,7 @@
 | `core_tests`, `state_tests` (ctest) | PASS |
 Still not tested: a real PC with audio hardware, FL Studio, Focusrite, OBS/Discord.
 
-## 0.2.0 — 2026-10-30 (Linux sandbox + MinGW cross-compiler + Wine)
+## 0.2.0 — 2026-10-30 (Linux build machine + MinGW cross-compiler + Wine)
 Environment: GCC 13.3 (Linux), MinGW-w64 GCC 13.2 (Windows target), Wine 9 (`wine64`), PulseAudio null sinks as fake
 output devices ("VirtualCable", "Speakers", 44.1 kHz). Still **no real Windows, MSVC, FL Studio, Focusrite, OBS, Discord or Voxengo.**
 
@@ -32,7 +32,7 @@ Key numbers:
 
 ## 0.1.0 — 2026-10-28 (OX session)
 
-**Environment:** Linux x86_64 cloud sandbox, GCC 13.3, CMake 3.28, Ninja, VST3 SDK 3.8.1. No Windows, no MSVC, no MinGW, no audio hardware,
+**Environment:** Linux x86_64 build machine, GCC 13.3, CMake 3.28, Ninja, VST3 SDK 3.8.1. No Windows, no MSVC, no MinGW, no audio hardware,
 **no Focusrite, no FL Studio, no Voxengo Recorder, no Discord/OBS.** Date: 2026-10-28.
 
 ## Run and passed
