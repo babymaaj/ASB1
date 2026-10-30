@@ -7,7 +7,8 @@ FL Studio stays on Focusrite ASIO; nothing here touches the ASIO driver or Focus
 
 **Status: alpha.** The Windows build has now been compiled (MinGW cross-compiler), and the Windows `.exe`/plugin DLL have been
 run under Wine: Steinberg's Windows validator passes 47/47 and `asb_probe` streams real audio through WASAPI to virtual devices.
-It has **still never run on a real Windows PC, MSVC, FL Studio or a Focusrite.** See `TEST_RESULTS.md` and `FRIEND_HANDOFF.md`. Changes: `CHANGELOG.md`.
+It also builds with MSVC and passes the extensive validator on real Windows in CI (GitHub Actions).
+It has **still never run on a PC with real audio hardware, in FL Studio or with a Focusrite.** See `TEST_RESULTS.md` and `FRIEND_HANDOFF.md`. Changes: `CHANGELOG.md`.
 
 ## Layout
 | Path | What |

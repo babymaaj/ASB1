@@ -5,7 +5,8 @@ Fixed in 0.2.0 (see CHANGELOG.md): old #1 compile errors (MinGW-verified; MSVC s
 and fixed: stuck high latency after a device stall, and underruns with big ASIO buffers.
 
 Still open:
-1. **Never run on real Windows / MSVC.** MinGW + Wine are good evidence but not proof. MSVC `/W4 /permissive-` may still warn.
+1. **Never run on a real PC with audio hardware / in FL Studio.** It builds and validates on real Windows (CI), but the CI
+   machine has no sound devices, so actual output to a device is only proven under Wine.
 2. **No custom UI.** Host-generic parameters only.
 3. Device list only refreshed when the plugin instance is created (reopen the plugin to see a newly plugged device).
 4. "System default" is resolved when the device opens; a default-device change while streaming is not followed

@@ -1,5 +1,14 @@
 # Test results (what was ACTUALLY run)
 
+## 0.2.0 — real Windows CI (GitHub Actions windows-latest, Windows Server 2025, Visual Studio 2026 / MSVC)
+| Step | Result |
+|---|---|
+| MSVC build (plugin, validator, tests, asb_probe), static CRT | PASS |
+| Steinberg validator, extensive mode (`-e`) | PASS (after the COM crash fix; before it: access violation in `enumerateRenderDevices`) |
+| `asb_probe list` / `asb_probe 0 3` (runner has no audio device) | runs, no crash |
+| `core_tests`, `state_tests` (ctest) | PASS |
+Still not tested: a real PC with audio hardware, FL Studio, Focusrite, OBS/Discord.
+
 ## 0.2.0 — 2026-10-30 (Linux sandbox + MinGW cross-compiler + Wine)
 Environment: GCC 13.3 (Linux), MinGW-w64 GCC 13.2 (Windows target), Wine 9 (`wine64`), PulseAudio null sinks as fake
 output devices ("VirtualCable", "Speakers", 44.1 kHz). Still **no real Windows, MSVC, FL Studio, Focusrite, OBS, Discord or Voxengo.**

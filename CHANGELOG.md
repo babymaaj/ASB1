@@ -8,6 +8,14 @@ Built on OX's 0.1.0. Everything below is covered by tests; see TEST_RESULTS.md.
 * `KSDATAFORMAT_SUBTYPE_IEEE_FLOAT` link error (initguid/ksmedia include order) → GUID defined locally.
 * Windows libs (ole32, avrt, uuid) linked from CMake instead of MSVC-only `#pragma comment`.
 
+**Found by the first real-Windows MSVC build (GitHub Actions, Visual Studio 2026)**
+* **Crash fixed:** `enumerateRenderDevices()` released the device enumerator *after* `CoUninitialize` → access violation
+  whenever the plugin is created on a thread without COM (Steinberg validator; very likely FL's plugin scanner). Wine hid it.
+* `functiondiscoverykeys_devpkey.h` needs `propkeydef.h` first under MSVC.
+* MSVC now compiles sources as UTF-8 (`/utf-8`); Release builds emit PDB symbols for readable crash stacks.
+* CI: works on `windows-latest` (VS 2026; the hard-coded VS 2022 generator broke it), runs the extensive validator,
+  asb_probe and tests as separate steps, captures a cdb stack on crash, and always uploads logs.
+
 **Streaming fixes**
 * **Latency could get stuck at ~600 ms.** If the output device starts slowly or stalls (device switch, USB glitch, sleep),
   the backlog never drained (drift control only moves ±0.5 %, i.e. minutes). Added hard resync: above 3× target fill the
