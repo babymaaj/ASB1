@@ -710,24 +710,34 @@ private:
         hline(r.left, r.right, r.top, c); hline(r.left, r.right, r.bottom - 1, c);
         fill(RECT{r.left, r.top, r.left + 1, r.bottom}, c); fill(RECT{r.right - 1, r.top, r.right, r.bottom}, c);
     }
-    // Text with optional letter-spacing. DrawText's own centring ignores the extra spacing, so with tracking we
-    // measure the string ourselves (minus the trailing space after the last letter) and place it exactly.
+    // Text with optional letter-spacing. GDI's own character-extra setting is ignored in GM_ADVANCED (used for
+    // scaling), so tracked text is laid out here character by character, and centred/right-aligned exactly.
     void text(RECT r, const wchar_t* t, COLORREF c, HFONT f, UINT fmt, int tracking = 0)
     {
         SetTextColor(dc_, c);
-        SetTextCharacterExtra(dc_, tracking);
         HGDIOBJ of = SelectObject(dc_, f);
-        if (tracking != 0 && (fmt & (DT_CENTER | DT_RIGHT))) {
-            SIZE sz{}; const int len = int(wcslen(t));
-            GetTextExtentPoint32W(dc_, t, len, &sz);
-            const int w = sz.cx - (len > 0 ? tracking : 0);
-            const int left = (fmt & DT_CENTER) ? (r.left + r.right - w) / 2 : r.right - w;
-            r.left = left; r.right = left + w + tracking + 2;
-            fmt = (fmt & ~UINT(DT_CENTER | DT_RIGHT)) | DT_LEFT | DT_NOCLIP;
+        if (tracking == 0) {
+            DrawTextW(dc_, t, -1, &r, fmt | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc_, of);
+            return;
         }
-        DrawTextW(dc_, t, -1, &r, fmt | DT_SINGLELINE | DT_NOPREFIX);
+        const int len = int(wcslen(t));
+        int adv[128]; int total = 0;
+        for (int i = 0; i < len && i < 128; ++i) {
+            SIZE sz{}; GetTextExtentPoint32W(dc_, t + i, 1, &sz);
+            adv[i] = sz.cx + (i + 1 < len ? tracking : 0);
+            total += adv[i];
+        }
+        TEXTMETRICW tm{}; GetTextMetricsW(dc_, &tm);
+        int x = r.left;
+        if (fmt & DT_CENTER) x = (r.left + r.right - total) / 2;
+        else if (fmt & DT_RIGHT) x = r.right - total;
+        int y = r.top;
+        if (fmt & DT_VCENTER) y = (r.top + r.bottom - tm.tmHeight) / 2;
+        else if (fmt & DT_BOTTOM) y = r.bottom - tm.tmHeight;
+        SetTextAlign(dc_, TA_LEFT | TA_TOP | TA_NOUPDATECP);
+        for (int i = 0; i < len && i < 128; ++i) { TextOutW(dc_, x, y, t + i, 1); x += adv[i]; }
         SelectObject(dc_, of);
-        SetTextCharacterExtra(dc_, 0);
     }
     void engrave(RECT r, const wchar_t* t, COLORREF c, HFONT f, UINT fmt, int tracking)
     {
