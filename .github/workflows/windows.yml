@@ -205,7 +205,7 @@ jobs:
             -framework Cocoa -framework AudioToolbox -framework AudioUnit -framework CoreAudio 2>&1 | tee out/auhost-log.txt
           ./au_view_test ui-au.png 2>&1 | tee -a out/auhost-log.txt || {
             echo "---- crash, backtrace:" | tee -a out/auhost-log.txt
-            lldb --batch -o run -k "bt 25" -k "quit" -- ./au_view_test ui-au.png 2>&1 | grep -E "frame #|stop reason|found AU|AU view|FAIL" | head -40 | tee -a out/auhost-log.txt
+            lldb --batch -o run -k "thread backtrace 25" -k "quit" -- ./au_view_test ui-au.png 2>&1 | grep -v "^\s*$" | tail -60 | tee -a out/auhost-log.txt
             m=$(sed 's/%/%25/g' out/auhost-log.txt | awk '{printf "%s%%0A", $0}'); echo "::error title=AU host crash::${m}"
             exit 1; }
           grep -q "^saved" out/auhost-log.txt
