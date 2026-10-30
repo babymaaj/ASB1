@@ -6,6 +6,7 @@
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vstspeaker.h"
+#include <algorithm>
 #include <cstring>
 
 using namespace Steinberg;
@@ -55,6 +56,8 @@ tresult PLUGIN_API Processor::setupProcessing(ProcessSetup& setup)
 {
     sampleRate_ = setup.sampleRate;
     maxBlock_ = setup.maxSamplesPerBlock;
+    const size_t cap = size_t(std::max<int32>(setup.maxSamplesPerBlock, 64));
+    scratchL_.assign(cap, 0.f); scratchR_.assign(cap, 0.f);   // non-RT: allocation allowed here
     engine_.setHostSampleRate(setup.sampleRate);
     engine_.setHostBlockSize(setup.maxSamplesPerBlock);
     return AudioEffect::setupProcessing(setup);
@@ -65,6 +68,8 @@ tresult PLUGIN_API Processor::setActive(TBool state)
     if (state) {
         engine_.setHostSampleRate(sampleRate_);
         engine_.setHostBlockSize(maxBlock_);
+        engine_.setTargetMs(kLatencyMs[latencyIdx_]);
+        if (scratchL_.empty()) { scratchL_.assign(size_t(std::max(maxBlock_, 64)), 0.f); scratchR_.assign(scratchL_.size(), 0.f); }
         engine_.setGain(normToGain(level_));
         engine_.setDeviceIndex(device_);
         engine_.setEnabled(enable_);
@@ -85,6 +90,12 @@ void Processor::applyParam(ParamID id, double v) noexcept
         break;
     }
     case kParamOutputLevel:  level_ = v; engine_.setGain(normToGain(v)); break;
+    case kParamLatency: {
+        const int i = latencyIndexFromNorm(v);
+        if (i != latencyIdx_) { latencyIdx_ = i; engine_.requestTargetMs(kLatencyMs[i]); }
+        break;
+    }
+    case kParamChannels: channels_ = static_cast<ChannelMode>(channelIndexFromNorm(v)); break;
     case kParamDevice: {
         const int idx = static_cast<int>(v * (kMaxDevices - 1) + 0.5);
         if (idx != device_) { device_ = idx; engine_.requestDeviceIndex(idx); }
@@ -101,12 +112,20 @@ void Processor::passAndStream(ProcessData& d, T* const* in, T* const* out) noexc
     // Path A: transparent passthrough, zero added delay (memcpy only if host gave separate buffers).
     for (int ch = 0; ch < 2; ++ch)
         if (in[ch] != out[ch]) std::memcpy(out[ch], in[ch], sizeof(T) * size_t(n));
-    // Meter (UI): skipped for silent blocks.
-    if (d.inputs[0].silenceFlags != 0x3) engine_.meterPlanar(in[0], in[1], size_t(n));
-    // Path B: copy into lock-free ring. Never blocks; drops (counted) on overflow.
-    if (enable_) {
-        if (d.inputs[0].silenceFlags == 0x3) engine_.pushSilence(size_t(n));
-        else engine_.pushPlanar(in[0], in[1], size_t(n));
+    const bool silent = d.inputs[0].silenceFlags == 0x3;
+    if (silent) { if (enable_) engine_.pushSilence(size_t(n)); return; }
+    if (channels_ == ChannelMode::Stereo || scratchL_.empty()) {
+        engine_.meterPlanar(in[0], in[1], size_t(n));                  // meter = what goes to the stream
+        if (enable_) engine_.pushPlanar(in[0], in[1], size_t(n));     // Path B: lock-free ring, never blocks
+        return;
+    }
+    // Channel mode: remix into preallocated scratch (chunked in case a host exceeds maxSamplesPerBlock).
+    const size_t cap = scratchL_.size();
+    for (size_t off = 0; off < size_t(n); off += cap) {
+        const size_t k = std::min(cap, size_t(n) - off);
+        applyChannelMode(channels_, in[0] + off, in[1] + off, k, scratchL_.data(), scratchR_.data());
+        engine_.meterPlanar(scratchL_.data(), scratchR_.data(), k);
+        if (enable_) engine_.pushPlanar(scratchL_.data(), scratchR_.data(), k);
     }
 }
 
@@ -177,6 +196,8 @@ tresult PLUGIN_API Processor::setState(IBStream* state)
     PluginState st;
     if (!readState(s, st)) return kResultFalse;
     enable_ = st.enable; level_ = st.level;
+    latencyIdx_ = st.latencyIndex; channels_ = static_cast<ChannelMode>(st.channelMode);
+    engine_.setTargetMs(kLatencyMs[latencyIdx_]);
     device_ = resolveSavedDevice(st, engine_.devices());
     engine_.setGain(normToGain(level_));
     engine_.setDeviceIndex(device_);
@@ -190,6 +211,7 @@ tresult PLUGIN_API Processor::getState(IBStream* state)
     IBStreamer s(state, kLittleEndian);
     PluginState st;
     st.enable = enable_; st.level = level_; st.deviceIndex = device_;
+    st.latencyIndex = latencyIdx_; st.channelMode = int(channels_);
     const auto& devs = engine_.devices();
     if (device_ > 0 && size_t(device_) < devs.size()) st.deviceId = devs[size_t(device_)].id;
     return writeState(s, st) ? kResultOk : kResultFalse;

@@ -47,6 +47,25 @@ static bool saveBmp(HWND h, const char* path)
     return true;
 }
 
+// Minimal IPlugFrame so the preview window follows the plugin's size changes (like a DAW does).
+struct PreviewFrame : public IPlugFrame {
+    HWND hwnd = nullptr;
+    tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* r) override
+    {
+        RECT wr{0, 0, r->getWidth(), r->getHeight()};
+        AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
+        SetWindowPos(hwnd, nullptr, 0, 0, wr.right - wr.left, wr.bottom - wr.top, SWP_NOMOVE | SWP_NOZORDER);
+        return view->onSize(r);
+    }
+    tresult PLUGIN_API queryInterface(const TUID iid, void** obj) override
+    {
+        if (FUnknownPrivate::iidEqual(iid, IPlugFrame::iid) || FUnknownPrivate::iidEqual(iid, FUnknown::iid)) { *obj = this; return kResultOk; }
+        *obj = nullptr; return kNoInterface;
+    }
+    uint32 PLUGIN_API addRef() override { return 1; }
+    uint32 PLUGIN_API release() override { return 1; }
+};
+
 int main(int argc, char** argv)
 {
     const char* shot = nullptr; int shotMs = 2500; bool stream = false;
@@ -108,6 +127,8 @@ int main(int argc, char** argv)
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
     HWND frame = CreateWindowExW(0, L"STATIC", L"ASB (preview)", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
                                  100, 100, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    static PreviewFrame pf; pf.hwnd = frame;
+    view->setFrame(&pf);
     if (view->attached(frame, kPlatformTypeHWND) != kResultOk) { std::printf("attach failed\n"); return 1; }
 
     const ULONGLONG t0 = GetTickCount64();

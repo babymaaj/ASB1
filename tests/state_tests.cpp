@@ -27,7 +27,27 @@ int main()
         int64 pos; m.seek(0, IBStream::kIBSeekSet, &pos);
         IBStreamer r(&m, kLittleEndian); PluginState b;
         CHECK(readState(r, b));
-        CHECK(b.version == 2 && b.enable && b.level == 0.5 && b.deviceIndex == 2 && b.deviceId == a.deviceId);
+        CHECK(b.version == 3 && b.enable && b.level == 0.5 && b.deviceIndex == 2 && b.deviceId == a.deviceId);
+        CHECK(b.latencyIndex == 2 && b.channelMode == 0);
+    }
+    std::printf("state v3 latency + channels round trip\n");
+    {
+        MemoryStream m; IBStreamer w(&m, kLittleEndian);
+        PluginState a; a.latencyIndex = 4; a.channelMode = 1;
+        CHECK(writeState(w, a));
+        int64 pos; m.seek(0, IBStream::kIBSeekSet, &pos);
+        IBStreamer r(&m, kLittleEndian); PluginState b;
+        CHECK(readState(r, b));
+        CHECK(b.latencyIndex == 4 && b.channelMode == 1);
+    }
+    std::printf("v2 project (0.2-0.4) still loads with defaults\n");
+    {
+        MemoryStream m; IBStreamer w(&m, kLittleEndian);
+        w.writeInt32(2); w.writeInt32(1); w.writeDouble(0.7); w.writeInt32(1); w.writeStr8("CABLE");
+        int64 pos; m.seek(0, IBStream::kIBSeekSet, &pos);
+        IBStreamer r(&m, kLittleEndian); PluginState b;
+        CHECK(readState(r, b));
+        CHECK(b.version == 2 && b.deviceId == "CABLE" && b.latencyIndex == 2 && b.channelMode == 0);
     }
     std::printf("v1 project still loads\n");
     {

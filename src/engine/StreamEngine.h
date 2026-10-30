@@ -29,16 +29,16 @@ std::vector<DeviceInfo> enumerateRenderDevices();
 // Streaming latency policy, shared by the engines and tests.
 // Target ring fill = max(30 ms, 2 host blocks): a big ASIO buffer (1024/2048) delivers
 // audio in large bursts, so the cushion must cover at least two of them.
-inline size_t targetFillFrames(double hostRate, int hostBlock)
+inline size_t targetFillFrames(double hostRate, int hostBlock, int targetMs = 30)
 {
-    const size_t ms30 = static_cast<size_t>(hostRate * 0.03);
+    const size_t ms = static_cast<size_t>(hostRate * (targetMs > 0 ? targetMs : 30) / 1000.0);
     const size_t blk2 = static_cast<size_t>(hostBlock > 0 ? hostBlock : 0) * 2;
-    return ms30 > blk2 ? ms30 : blk2;
+    return ms > blk2 ? ms : blk2;
 }
 // Above this fill the resampler hard-resyncs to target (see DriftResampler).
-inline size_t resyncAboveFrames(double hostRate, int hostBlock)
+inline size_t resyncAboveFrames(double hostRate, int hostBlock, int targetMs = 30)
 {
-    return targetFillFrames(hostRate, hostBlock) * 3 + static_cast<size_t>(hostBlock > 0 ? hostBlock : 0);
+    return targetFillFrames(hostRate, hostBlock, targetMs) * 3 + static_cast<size_t>(hostBlock > 0 ? hostBlock : 0);
 }
 
 enum class StreamStatus : int { Off = 0, Connecting = 1, Streaming = 2, Error = 3 };
@@ -98,6 +98,7 @@ public:
 
     // ---- audio thread: atomics only, never a syscall. The worker notices within ~50 ms. ----
     void requestEnabled(bool on) noexcept { enabled_.store(on, std::memory_order_relaxed); configGen_.fetch_add(1, std::memory_order_release); }
+    void requestTargetMs(int ms) noexcept { targetMs_.store(ms, std::memory_order_relaxed); configGen_.fetch_add(1, std::memory_order_release); }
     void requestDeviceIndex(int idx) noexcept { deviceIndex_.store(idx, std::memory_order_relaxed); configGen_.fetch_add(1, std::memory_order_release); }
     void setGain(float g) noexcept { gain_.store(g, std::memory_order_relaxed); }
 
@@ -106,6 +107,7 @@ public:
     void setHostBlockSize(int frames) noexcept { hostBlock_.store(frames, std::memory_order_relaxed); bump(); }
     void setEnabled(bool on) noexcept { requestEnabled(on); bump(); }
     void setDeviceIndex(int idx) noexcept { requestDeviceIndex(idx); bump(); }
+    void setTargetMs(int ms) noexcept { requestTargetMs(ms); bump(); }
     bool enabled() const noexcept { return enabled_.load(std::memory_order_relaxed); }
 
     // Device list snapshot the worker resolves indices against (same order the controller shows).
@@ -134,6 +136,7 @@ private:
     std::vector<DeviceInfo> devices_;  // immutable while the worker runs
     std::atomic<double> hostRate_{48000.0};
     std::atomic<int>    hostBlock_{512};
+    std::atomic<int>    targetMs_{30};
     std::atomic<float>  gain_{1.0f};
     mutable std::atomic<float> peak_[2]{};
     std::atomic<uint32_t> configGen_{0};

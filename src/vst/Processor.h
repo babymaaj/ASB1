@@ -1,5 +1,7 @@
 #pragma once
 #include "engine/StreamEngine.h"
+#include "core/ChannelMode.h"
+#include <vector>
 #include "public.sdk/source/vst/vstaudioeffect.h"
 #include <atomic>
 
@@ -40,6 +42,9 @@ private:
     int    meterCountdown_ = 0;
     double sampleRate_ = 48000.0;
     int    maxBlock_ = 512;
+    int    latencyIdx_ = 2;
+    ChannelMode channels_ = ChannelMode::Stereo;
+    std::vector<float> scratchL_, scratchR_;   // sized in setupProcessing (non-RT), used for channel modes
 };
 
 } // namespace asb

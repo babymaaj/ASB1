@@ -17,13 +17,13 @@ cmake -S . -B build-win -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64.cmake -D
 # The SDK's post-build step calls Windows' `attrib`, which fails on Linux after the DLL is already linked; -k 0 keeps going.
 cmake --build build-win -j"$(nproc)" -- -k 0 || true
 cmake --build build-win --target validator
-ls -la build-win/VST3/Release/ASIOStreamBridge.vst3/Contents/x86_64-win/ASIOStreamBridge.vst3
+ls -la build-win/VST3/Release/ASB.vst3/Contents/x86_64-win/ASB.vst3
 
 if command -v /usr/lib/wine/wine64 >/dev/null; then
   export WINEDEBUG=-all
   W=/usr/lib/wine/wine64
   $W build-win/core_tests.exe | tail -1
   $W build-win/bin/state_tests.exe | tail -1
-  $W build-win/bin/validator.exe build-win/VST3/Release/ASIOStreamBridge.vst3 2>&1 | grep Result
+  $W build-win/bin/validator.exe build-win/VST3/Release/ASB.vst3 2>&1 | grep Result
   echo "For real audio under Wine: start pulseaudio with a null sink, then: $W build-win/asb_probe.exe list"
 fi

@@ -8,13 +8,13 @@ git clone --depth 1 --recursive --shallow-submodules https://github.com/steinber
 cmake -S . -B build -A x64          :: picks your installed Visual Studio
 cmake --build build --config Release
 ctest --test-dir build -C Release          :: core + state tests
-build\bin\Release\validator.exe build\VST3\Release\ASIOStreamBridge.vst3   :: if the validator target was built
+build\bin\Release\validator.exe build\VST3\Release\ASB.vst3   :: if the validator target was built
 ```
 The build runs the Steinberg validator automatically after linking (`SMTG_RUN_VST_VALIDATOR=ON`). Static CRT (/MT) is forced for the project and SDK.
 
 Install (admin shell, or per-user location FL Studio also scans):
 ```bat
-xcopy /E /I build\VST3\Release\ASIOStreamBridge.vst3 "C:\Program Files\Common Files\VST3\ASIOStreamBridge.vst3"
+xcopy /E /I build\VST3\Release\ASB.vst3 "C:\Program Files\Common Files\VST3\ASB.vst3"
 ```
 Then in FL Studio: Options → Manage plugins → Find plugins; add to the **Master** mixer track, last in the chain.
 Keep Audio → Device = your Focusrite ASIO driver.

@@ -2,12 +2,13 @@
 #include "vst/Ids.h"
 #include "vst/Processor.h"
 #include "public.sdk/source/main/pluginfactory.h"
+#include "vst/Update.h"
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
 bool InitModule() { return true; }
-bool DeinitModule() { return true; }
+bool DeinitModule() { asb::updateCheckShutdown(); return true; }
 
 BEGIN_FACTORY_DEF("maai", "https://maai.lol", "")
 

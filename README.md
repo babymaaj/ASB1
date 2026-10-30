@@ -1,4 +1,8 @@
-# ASB — ASIO Stream Bridge, by maai (alpha 0.4.0)
+# ASB — ASIO Stream Bridge, by maai (alpha 0.5.0)
+
+**Install:** download `ASB-Setup-x.y.z.exe` from [Releases](https://github.com/babymaaj/ASB1/releases/latest), run it,
+then in FL Studio: Options > Manage plugins > Find plugins, and put **ASB** last on the Master track.
+
 
 A small VST3 "audio splitter" for FL Studio. Put it on the **master bus**: audio passes through untouched
 (bit-exact, zero added delay) while a copy is sent through a lock-free ring buffer to a worker thread that

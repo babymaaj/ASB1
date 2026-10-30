@@ -85,6 +85,15 @@ tresult PLUGIN_API Controller::initialize(FUnknown* context)
     if (devices.size() > size_t(kMaxDevices)) devices.resize(kMaxDevices);
     parameters.addParameter(new DeviceParam(std::move(devices)));
 
+    auto* lat = new StringListParameter(STR16("Latency"), kParamLatency, nullptr, ParameterInfo::kIsList);
+    for (auto* t : {STR16("10 ms"), STR16("20 ms"), STR16("30 ms"), STR16("60 ms"), STR16("120 ms")}) lat->appendString(t);
+    lat->setNormalized(latencyNorm(kLatencyDefault));
+    lat->getInfo().defaultNormalizedValue = latencyNorm(kLatencyDefault);
+    parameters.addParameter(lat);
+    auto* chn = new StringListParameter(STR16("Channels"), kParamChannels, nullptr, ParameterInfo::kIsList);
+    for (auto* t : {STR16("Stereo"), STR16("Mono"), STR16("Swap L/R"), STR16("Left only"), STR16("Right only")}) chn->appendString(t);
+    parameters.addParameter(chn);
+
     parameters.addParameter(STR16("Buffer Health"), nullptr, 0, 0.0, ParameterInfo::kIsReadOnly, kParamBufferHealth);
     parameters.addParameter(STR16("Status"), nullptr, 3, 0.0, ParameterInfo::kIsReadOnly, kParamStatus);
     return kResultOk;
@@ -98,6 +107,8 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state)
     if (!readState(s, st)) return kResultFalse;
     setParamNormalized(kParamStreamEnable, st.enable ? 1.0 : 0.0);
     setParamNormalized(kParamOutputLevel, st.level);
+    setParamNormalized(kParamLatency, latencyNorm(st.latencyIndex));
+    setParamNormalized(kParamChannels, channelNorm(st.channelMode));
     if (auto* p = static_cast<DeviceParam*>(parameters.getParameter(kParamDevice)))
         setParamNormalized(kParamDevice, p->toNormalized(resolveSavedDevice(st, p->devices())));
     return kResultOk;

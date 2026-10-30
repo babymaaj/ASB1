@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(ASIOStreamBridge VERSION 0.4.0 LANGUAGES CXX)
+project(ASB VERSION 0.5.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,6 +8,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+if(WIN32)
+  enable_language(RC)
+endif()
 if(MSVC)  # one CRT everywhere (static, no VC++ redistributable needed on the user's machine)
   set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -66,19 +69,23 @@ if(ASB_BUILD_VST3)
   smtg_enable_vst3_sdk()
 
   if(WIN32)
-    set(ASB_EDITOR_SRC src/vst/Editor_win.cpp)
+    set(ASB_EDITOR_SRC src/vst/Editor_win.cpp src/vst/Update_win.cpp)
   else()
-    set(ASB_EDITOR_SRC src/vst/Editor_none.cpp)
+    set(ASB_EDITOR_SRC src/vst/Editor_none.cpp src/vst/Update_none.cpp)
   endif()
-  smtg_add_vst3plugin(ASIOStreamBridge
-    src/vst/Entry.cpp src/vst/Processor.cpp src/vst/Controller.cpp ${ASB_EDITOR_SRC})
-  target_include_directories(ASIOStreamBridge PRIVATE src)
-  target_link_libraries(ASIOStreamBridge PRIVATE sdk asb_engine)
+  set(SMTG_PACKAGE_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/asb.ico")   # bundle folder icon
   if(WIN32)
-    target_link_libraries(ASIOStreamBridge PRIVATE gdiplus gdi32 user32)
+    list(APPEND ASB_EDITOR_SRC src/vst/asb.rc)                                # file properties + icon
+  endif()
+  smtg_add_vst3plugin(ASB
+    src/vst/Entry.cpp src/vst/Processor.cpp src/vst/Controller.cpp ${ASB_EDITOR_SRC})
+  target_include_directories(ASB PRIVATE src)
+  target_link_libraries(ASB PRIVATE sdk asb_engine)
+  if(WIN32)
+    target_link_libraries(ASB PRIVATE gdiplus gdi32 user32 winhttp shell32)
   endif()
   if(TARGET validator)   # always build it, so it can be run by hand / in CI even with ASB_RUN_VALIDATOR=OFF
-    add_dependencies(ASIOStreamBridge validator)
+    add_dependencies(ASB validator)
   endif()
 
   if(ASB_BUILD_TESTS)
@@ -89,9 +96,9 @@ if(ASB_BUILD_VST3)
   endif()
 
   if(ASB_BUILD_TESTS AND WIN32)   # opens the plugin window without a DAW (+ optional screenshot)
-    add_executable(editor_preview tests/editor_preview.cpp src/vst/Processor.cpp src/vst/Controller.cpp src/vst/Editor_win.cpp)
+    add_executable(editor_preview tests/editor_preview.cpp src/vst/Processor.cpp src/vst/Controller.cpp src/vst/Editor_win.cpp src/vst/Update_win.cpp)
     target_include_directories(editor_preview PRIVATE src)
-    target_link_libraries(editor_preview PRIVATE sdk sdk_hosting asb_engine gdiplus gdi32 user32)
+    target_link_libraries(editor_preview PRIVATE sdk sdk_hosting asb_engine gdiplus gdi32 user32 winhttp shell32)
   endif()
 
   if(ASB_BUILD_TESTS AND NOT WIN32)  # bench uses /proc + clock_gettime (Linux only for now)

@@ -4,7 +4,7 @@ Repo state (0.2.0): the Windows build compiles (MinGW), passes the Windows valid
 under Wine. **Not yet run on a real Windows PC / MSVC.** What changed: `CHANGELOG.md`. What's open: `KNOWN_ISSUES.md`.
 
 ## Priority order
-1. **Get the build**: GitHub → Actions → latest green `windows-build` → artifact `ASIOStreamBridge-win64`
+1. **Get the build**: GitHub → Actions → latest green `windows-build` → artifact `ASB-win64`
    (CI already builds with MSVC and passes the extensive validator).
 2. **`asb_probe`** (`TEST_ON_WINDOWS.md`): tone on a virtual cable, `underruns`/`resyncs` should stay ~0 after the first second.
 3. **Real test with Focusrite + FL Studio**: FL stays on Focusrite ASIO, input monitoring unaffected, record + monitor,

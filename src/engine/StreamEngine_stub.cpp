@@ -113,7 +113,7 @@ void StreamEngine::workerMain()
             seenGen = configGen_.load(std::memory_order_acquire);
             const double host = hostRate_.load();
             const int block = hostBlock_.load();
-            rs.configure(&ring_, host, devRate, targetFillFrames(host, block), resyncAboveFrames(host, block));
+            rs.configure(&ring_, host, devRate, targetFillFrames(host, block, targetMs_.load()), resyncAboveFrames(host, block, targetMs_.load()));
             ring_.discardAll();
             devRate_.store(devRate);
             status_.store(2);

@@ -3,6 +3,8 @@
 #include "core/SpscFrameRing.h"
 #include "engine/StreamEngine.h"
 #include "core/Utf8.h"
+#include "core/ChannelMode.h"
+#include "core/Version.h"
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
@@ -215,6 +217,61 @@ static void testGainSmoothing()
     CHECK(std::fabs(last - 0.5f) < 1e-3f); // settles exactly back at full level
 }
 
+static void testChannelModes()
+{
+    std::printf("channel modes\n");
+    const float l[3] = {1.f, 0.5f, -1.f}, r[3] = {0.f, 0.5f, 1.f};
+    float a[3], b[3];
+    applyChannelMode(ChannelMode::Stereo, l, r, 3, a, b);    CHECK(a[0] == 1.f && b[0] == 0.f && a[2] == -1.f && b[2] == 1.f);
+    applyChannelMode(ChannelMode::Mono, l, r, 3, a, b);      CHECK(a[0] == 0.5f && b[0] == 0.5f && a[1] == 0.5f && a[2] == 0.f && b[2] == 0.f);
+    applyChannelMode(ChannelMode::Swap, l, r, 3, a, b);      CHECK(a[0] == 0.f && b[0] == 1.f);
+    applyChannelMode(ChannelMode::LeftOnly, l, r, 3, a, b);  CHECK(a[2] == -1.f && b[2] == -1.f);
+    applyChannelMode(ChannelMode::RightOnly, l, r, 3, a, b); CHECK(a[2] == 1.f && b[2] == 1.f);
+    const double dl[2] = {0.25, 0.75}, dr[2] = {0.75, 0.25};
+    applyChannelMode(ChannelMode::Mono, dl, dr, 2, a, b);    CHECK(a[0] == 0.5f && b[1] == 0.5f);   // 64-bit input
+}
+
+static void testLatencyTargets()
+{
+    std::printf("latency targets\n");
+    CHECK(targetFillFrames(48000, 256) == 1440);              // default 30 ms
+    CHECK(targetFillFrames(48000, 256, 10) == 512);           // 10 ms (480) < 2 blocks (512) -> 512
+    CHECK(targetFillFrames(48000, 256, 120) == 5760);
+    CHECK(targetFillFrames(48000, 2048, 10) == 4096);         // big ASIO buffer still wins
+    CHECK(resyncAboveFrames(48000, 256, 60) == 2880 * 3 + 256);
+    // each latency choice streams cleanly at 256 and 1024 blocks with drift
+    for (int ms : {10, 20, 30, 60, 120})
+        for (int blk : {256, 1024}) {
+            SpscFrameRing ring(32768); DriftResampler rs;
+            rs.configure(&ring, 48000, 48000, targetFillFrames(48000, blk, ms), resyncAboveFrames(48000, blk, ms));
+            std::vector<float> in(size_t(blk), 0.1f), out(480 * 2);
+            double hostT = 0, devT = 0; const double actual = 48000 * (1 + 200e-6);
+            while (devT < 60) {
+                if (hostT <= devT) { ring.writePlanar(in.data(), in.data(), size_t(blk)); hostT += blk / actual; }
+                else { rs.render(out.data(), 480, 1.f); devT += 480 / 48000.0; }
+            }
+            if (rs.underruns() > 1 || rs.resyncs() != 0 || ring.overflowFrames() != 0)
+                std::printf("  %d ms / block %d: underruns=%llu resyncs=%llu\n", ms, blk, (unsigned long long)rs.underruns(), (unsigned long long)rs.resyncs());
+            CHECK(rs.underruns() <= 1 && rs.resyncs() == 0 && ring.overflowFrames() == 0);
+        }
+}
+
+static void testVersion()
+{
+    std::printf("version compare + release json\n");
+    CHECK((parseVersion("v0.5.1-alpha") == std::array<int, 3>{0, 5, 1}));
+    CHECK((parseVersion("1.12") == std::array<int, 3>{1, 12, 0}));
+    CHECK(isNewerVersion("v0.5.1", "0.5.0-alpha"));
+    CHECK(isNewerVersion("v1.0.0", "0.9.9"));
+    CHECK(!isNewerVersion("v0.5.0", "0.5.0-alpha"));
+    CHECK(!isNewerVersion("v0.4.9", "0.5.0"));
+    const std::string j = R"({"url":"x","html_url":"https://github.com/babymaaj/ASB1/releases/tag/v0.5.1","tag_name": "v0.5.1","name":"ASB \"0.5.1\""})";
+    CHECK(jsonStringField(j, "tag_name") == "v0.5.1");
+    CHECK(jsonStringField(j, "html_url") == "https://github.com/babymaaj/ASB1/releases/tag/v0.5.1");
+    CHECK(jsonStringField(j, "name") == "ASB \"0.5.1\"");
+    CHECK(jsonStringField(j, "missing").empty());
+}
+
 int main()
 {
     testRingBasic();
@@ -222,6 +279,9 @@ int main()
     testResampler();
     testStallRecovery();
     testUtf8();
+    testChannelModes();
+    testLatencyTargets();
+    testVersion();
     testInterpHf();
     testGainSmoothing();
     std::printf(g_fail ? "\n%d FAILURE(S)\n" : "\nALL PASSED\n", g_fail);

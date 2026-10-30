@@ -1,7 +1,11 @@
 name: windows-build
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']          # pushing a tag like v0.5.0 builds AND publishes a GitHub Release
+  workflow_dispatch:
 permissions:
-  contents: write   # lets the screenshot step push to the ci-screenshots branch
+  contents: write         # screenshots branch + releases
 jobs:
   build:
     runs-on: windows-latest   # Visual Studio 2026 since June 2026; CMake picks the installed VS automatically
@@ -10,6 +14,15 @@ jobs:
       - name: Fetch VST3 SDK
         shell: bash
         run: git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party/vst3sdk
+      - name: Version
+        id: ver
+        shell: bash
+        run: |
+          v=$(grep -oP 'project\(ASB VERSION \K[0-9.]+' CMakeLists.txt)
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$v"* ]]; then
+            echo "::error::tag ${GITHUB_REF#refs/tags/} does not match CMake version $v"; exit 1
+          fi
       - name: Configure
         shell: bash
         run: |
@@ -27,7 +40,7 @@ jobs:
         run: |
           set -o pipefail
           V=$(find build -name validator.exe | head -1); echo "validator: $V"
-          "$V" -e build/VST3/Release/ASIOStreamBridge.vst3 2>&1 | tee out/validator-log.txt
+          "$V" -e build/VST3/Release/ASB.vst3 2>&1 | tee out/validator-log.txt
       - name: Crash stack (validator under cdb)
         if: failure()
         shell: bash
@@ -35,8 +48,8 @@ jobs:
           CDB="/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe"
           [ -f "$CDB" ] || { echo "cdb not installed"; exit 0; }
           V=$(find build -name validator.exe | head -1); echo "validator: $V"
-          "$CDB" -g -G -lines -y "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols;build/VST3/Release/ASIOStreamBridge.vst3/Contents/x86_64-win" \
-            -c ".lines -e; .ecxr; kpn 40; r; q" "$V" -e build/VST3/Release/ASIOStreamBridge.vst3 > out/cdb-log.txt 2>&1 || true
+          "$CDB" -g -G -lines -y "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols;build/VST3/Release/ASB.vst3/Contents/x86_64-win" \
+            -c ".lines -e; .ecxr; kpn 40; r; q" "$V" -e build/VST3/Release/ASB.vst3 > out/cdb-log.txt 2>&1 || true
           grep -v -E "^ModLoad|^\(.*\): Load module|Symbol search path|Executable search path" out/cdb-log.txt | tail -45 > out/cdbstack-log.txt || true
       - name: Device probe (runner has no real audio device; checks for crashes)
         shell: bash
@@ -44,7 +57,7 @@ jobs:
           P=$(find build -name asb_probe.exe | head -1); echo "probe: $P"
           "$P" list 2>&1 | tee out/probe-log.txt
           "$P" 0 3 2>&1 | tee -a out/probe-log.txt
-      - name: UI screenshot (real Windows) -> ci-screenshots branch
+      - name: UI screenshots (real Windows) -> ci-screenshots branch
         if: github.ref == 'refs/heads/main'
         continue-on-error: true
         shell: bash
@@ -52,6 +65,7 @@ jobs:
           E=$(find build -name editor_preview.exe | head -1)
           "$E" ui.bmp 3000 --stream || true
           "$E" ui-off.bmp 2500 || true
+          ASB_PREVIEW_PAGE=settings "$E" ui-settings.bmp 2500 || true
           ls -la ui*.bmp || exit 0
           mkdir shots && mv ui*.bmp shots/
           cd shots
@@ -68,7 +82,6 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          # Compiler/linker/test errors as one annotation (readable via the API without downloading logs)
           cat out/*-log.txt 2>/dev/null | grep -E " error |error C|error LNK|fatal error|CMake Error|FAILED|Failed|Result:" \
             | sed 's/\r//' | sort -u | head -60 > err.txt || true
           [ -s err.txt ] || tail -40 out/*-log.txt > err.txt 2>/dev/null || true
@@ -84,22 +97,68 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp -r build/VST3/Release/ASIOStreamBridge.vst3 out/ 2>/dev/null || true
+          cp -r build/VST3/Release/ASB.vst3 out/ 2>/dev/null || true
           for exe in asb_probe core_tests editor_preview; do
             f=$(find build -name "$exe.exe" -path "*Release*" | head -1)
             [ -n "$f" ] && cp "$f" out/ || echo "::warning::$exe.exe not found"
           done
           cat > out/README-FIRST.txt <<'TXT'
-          ASIOStreamBridge.vst3  = the plugin (a folder). Copy the whole folder to C:\Program Files\Common Files\VST3\
-                                   It is not an .exe; FL Studio loads it. Rescan plugins in FL, put it last on the Master track.
-          asb_probe.exe          = test tool. Open Command Prompt in this folder:
-                                     asb_probe.exe list         (shows output devices + numbers)
-                                     asb_probe.exe 2 8          (plays a quiet tone to device 2 for 8 s)
+          ASB.vst3               = the plugin (a folder). Copy the whole folder to C:\Program Files\Common Files\VST3\
+                                   (delete an old ASIOStreamBridge.vst3 there if you have one). Or just run ASB-Setup.
+          asb_probe.exe          = test tool:  asb_probe.exe list   /   asb_probe.exe 2 8
           core_tests.exe         = self-test; should end with ALL PASSED.
           editor_preview.exe     = opens the plugin window without FL (try: editor_preview.exe --stream)
           *-log.txt              = build logs (send these if something fails).
           TXT
           echo "::notice title=Packaged files::$(cd out && find . -type f | sort | tr '\n' ' ')"
+      # ---- code signing: runs only when the repo has the secrets SIGN_PFX_BASE64 + SIGN_PFX_PASSWORD
+      - name: Sign plugin
+        id: sign
+        if: success()
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.SIGN_PFX_BASE64 }}
+          PFX_PASS: ${{ secrets.SIGN_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) { echo "signed=false" >> $env:GITHUB_OUTPUT; Write-Host "No signing certificate configured - skipping."; exit 0 }
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\sign.pfx", [Convert]::FromBase64String($env:PFX_B64))
+          $st = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          & $st.FullName sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:PFX_PASS /fd sha256 /tr http://timestamp.digicert.com /td sha256 "out\ASB.vst3\Contents\x86_64-win\ASB.vst3"
+          if ($LASTEXITCODE) { exit 1 }
+          echo "signed=true" >> $env:GITHUB_OUTPUT
+          echo "signtool=$($st.FullName)" >> $env:GITHUB_OUTPUT
+      - name: Build installer (ASB-Setup.exe)
+        if: success()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress | Out-Null }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=${{ steps.ver.outputs.version }}" "/DSrcDir=..\out" installer\asb.iss
+          if ($LASTEXITCODE) { exit 1 }
+          Get-ChildItem dist
+      - name: Sign installer
+        if: success() && steps.sign.outputs.signed == 'true'
+        shell: pwsh
+        env:
+          PFX_PASS: ${{ secrets.SIGN_PFX_PASSWORD }}
+        run: |
+          & "${{ steps.sign.outputs.signtool }}" sign /f "$env:RUNNER_TEMP\sign.pfx" /p $env:PFX_PASS /fd sha256 /tr http://timestamp.digicert.com /td sha256 (Get-ChildItem dist\ASB-Setup-*.exe).FullName
+          if ($LASTEXITCODE) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
-        with: { name: ASIOStreamBridge-win64, path: out }
+        with: { name: ASB-win64, path: out }
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with: { name: ASB-Setup, path: dist }
+      - name: Publish GitHub Release
+        if: success() && startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          # release notes = this version's section of CHANGELOG.md
+          awk -v v="$v" '$0 ~ "^## "v {f=1; next} /^## / && f {exit} f' CHANGELOG.md > notes.md
+          printf '\n---\n**Install:** download ASB-Setup-%s.exe below and run it. Then in FL Studio: Options > Manage plugins > Find plugins.\n' "$v" >> notes.md
+          (cd out && 7z a -tzip "../dist/ASB-$v-vst3.zip" ASB.vst3 >/dev/null)
+          gh release create "${GITHUB_REF#refs/tags/}" dist/ASB-Setup-*.exe "dist/ASB-$v-vst3.zip" \
+            --title "ASB ${GITHUB_REF#refs/tags/}" --notes-file notes.md

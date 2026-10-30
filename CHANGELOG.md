@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0-alpha (2026-10-30)
+* **Installer: `ASB-Setup-0.5.0.exe`** (by maai). Installs `ASB.vst3` into the standard VST3 folder, removes the old
+  `ASIOStreamBridge.vst3`, offers to close FL if the plugin is in use, adds an uninstaller (Windows Apps), and links to
+  VB-CABLE if it isn't installed yet.
+* **Plugin is now `ASB.vst3`** with the ASB icon and Windows file properties (product ASB, company maai).
+* **Settings page** (slider icon, top right):
+  * **Latency** 10 / 20 / 30 / 60 / 120 ms (saved per project). Lower = tighter, higher = safer on a busy PC.
+  * **Channels** Stereo / Mono / Swap / Left / Right (saved per project). The SIGNAL meter shows the result.
+  * **Accent** colour: green, white, red, blue, violet, amber (your preference, all projects).
+  * **Size** 100 / 125 / 150 / 200 % — redrawn at full resolution, not stretched (your preference).
+  * **Updates**: checks GitHub Releases at most once a day when the window opens (can be set to manual);
+    an UPDATE tag appears in the header when a newer version exists.
+* Preferences live in `%APPDATA%\maai\ASB\settings.ini`.
+* START STREAM / STREAMING label is now exactly centred (letter-spacing was not accounted for).
+* Releases: pushing a tag `vX.Y.Z` builds, (optionally) signs, and publishes the installer on GitHub Releases.
+* Fixed: a pending update-check thread could terminate the host when the plugin was unloaded.
+
+
 ## 0.4.0-alpha (2026-10-30)
 * **Renamed: "ASB" by maai** (vendor maai, maai.lol). Same plugin ID, so existing projects still load it.
   (The bundle is still `ASIOStreamBridge.vst3`; replace the old folder when updating.)
