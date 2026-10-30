@@ -69,6 +69,9 @@ if(ASB_BUILD_VST3)
     src/vst/Entry.cpp src/vst/Processor.cpp src/vst/Controller.cpp)
   target_include_directories(ASIOStreamBridge PRIVATE src)
   target_link_libraries(ASIOStreamBridge PRIVATE sdk asb_engine)
+  if(TARGET validator)   # always build it, so it can be run by hand / in CI even with ASB_RUN_VALIDATOR=OFF
+    add_dependencies(ASIOStreamBridge validator)
+  endif()
 
   if(ASB_BUILD_TESTS)
     add_executable(state_tests tests/state_tests.cpp "${ASB_VST3_SDK_PATH}/public.sdk/source/common/memorystream.cpp")

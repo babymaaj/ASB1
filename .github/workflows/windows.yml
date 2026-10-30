@@ -19,7 +19,6 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build --config Release 2>&1 | tee out/build-log.txt
-          cmake --build build --config Release --target validator 2>&1 | tee -a out/build-log.txt
           find build -name validator.exe -o -name asb_probe.exe
       - name: Steinberg validator
         shell: bash
