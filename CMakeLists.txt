@@ -1,0 +1,70 @@
+cmake_minimum_required(VERSION 3.25)
+project(ASIOStreamBridge VERSION 0.1.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+if(MSVC)  # one CRT everywhere (static, no VC++ redistributable needed on the user's machine)
+  set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+option(ASB_BUILD_VST3  "Build the VST3 plugin (needs VST3 SDK)" ON)
+option(ASB_BUILD_TESTS "Build core tests/benchmarks" ON)
+set(ASB_VST3_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst3sdk" CACHE PATH "Path to VST3 SDK checkout")
+
+# ---- platform-independent core + engine (no VST3 dependency) ----
+if(WIN32)
+  set(ASB_ENGINE_SRC src/engine/StreamEngine_win.cpp)
+else()
+  set(ASB_ENGINE_SRC src/engine/StreamEngine_stub.cpp)
+endif()
+add_library(asb_engine STATIC ${ASB_ENGINE_SRC})
+set_target_properties(asb_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(asb_engine PUBLIC src)
+find_package(Threads REQUIRED)
+target_link_libraries(asb_engine PUBLIC Threads::Threads)
+if(MSVC)
+  target_compile_options(asb_engine PRIVATE /W4 /permissive-)
+  target_compile_definitions(asb_engine PUBLIC _CRT_SECURE_NO_WARNINGS)
+else()
+  target_compile_options(asb_engine PRIVATE -Wall -Wextra)
+endif()
+
+if(ASB_BUILD_TESTS)
+  add_executable(core_tests tests/core_tests.cpp)
+  target_link_libraries(core_tests PRIVATE asb_engine)
+  enable_testing()
+  add_test(NAME core_tests COMMAND core_tests)
+  add_executable(asb_probe tests/asb_probe.cpp)
+  target_link_libraries(asb_probe PRIVATE asb_engine)
+endif()
+
+# ---- VST3 ----
+if(ASB_BUILD_VST3)
+  if(NOT EXISTS "${ASB_VST3_SDK_PATH}/CMakeLists.txt")
+    message(FATAL_ERROR "VST3 SDK not found at ${ASB_VST3_SDK_PATH}. See BUILD_INSTRUCTIONS.md (or -DASB_BUILD_VST3=OFF).")
+  endif()
+  set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)   # no heavy UI framework
+  set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)      # we install manually / via script
+  set(SMTG_RUN_VST_VALIDATOR ON CACHE BOOL "" FORCE)
+  add_subdirectory("${ASB_VST3_SDK_PATH}" "${CMAKE_BINARY_DIR}/vst3sdk" EXCLUDE_FROM_ALL)
+  smtg_enable_vst3_sdk()
+
+  smtg_add_vst3plugin(ASIOStreamBridge
+    src/vst/Entry.cpp src/vst/Processor.cpp src/vst/Controller.cpp)
+  target_include_directories(ASIOStreamBridge PRIVATE src)
+  target_link_libraries(ASIOStreamBridge PRIVATE sdk asb_engine)
+
+  if(ASB_BUILD_TESTS AND NOT WIN32)  # bench uses /proc + clock_gettime (Linux only for now)
+    add_executable(processor_bench tests/processor_bench.cpp src/vst/Processor.cpp)
+    target_include_directories(processor_bench PRIVATE src)
+    target_link_libraries(processor_bench PRIVATE sdk sdk_hosting asb_engine)
+  endif()
+endif()
