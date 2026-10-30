@@ -201,9 +201,9 @@ jobs:
       - name: AU host test (load the AU + its window like Logic does)
         run: |
           set -o pipefail
-          clang++ -std=c++17 -fobjc-arc -arch x86_64 tests/au_view_test.mm -o au_view_test \
-            -framework Cocoa -framework AudioToolbox -framework AudioUnit -framework CoreAudio
-          ./au_view_test ui-au.png 2>&1 | tee out/auhost-log.txt
+          clang++ -std=c++17 -fobjc-arc -arch "$(uname -m)" tests/au_view_test.mm -o au_view_test \
+            -framework Cocoa -framework AudioToolbox -framework AudioUnit -framework CoreAudio 2>&1 | tee out/auhost-log.txt
+          ./au_view_test ui-au.png 2>&1 | tee -a out/auhost-log.txt
           grep -q "^saved" out/auhost-log.txt
       - name: Device probe
         run: |
