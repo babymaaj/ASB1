@@ -6,6 +6,8 @@
 
 namespace asb {
 
+constexpr char16_t kReplacementChar = char16_t(0xFFFD);
+
 inline std::u16string utf8ToUtf16(const std::string& in)
 {
     std::u16string out;

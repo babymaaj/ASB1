@@ -11,6 +11,7 @@ endif()
 if(MSVC)  # one CRT everywhere (static, no VC++ redistributable needed on the user's machine)
   set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+  add_compile_options(/utf-8)   # sources are UTF-8 (MSVC otherwise assumes the system code page)
 endif()
 
 option(ASB_BUILD_VST3  "Build the VST3 plugin (needs VST3 SDK)" ON)
