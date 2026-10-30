@@ -17,6 +17,8 @@ public:
     const std::vector<DeviceInfo>& devices() const;
     // Live engine stats if the processor is in this process; false otherwise (then use the read-only params).
     bool liveStats(StreamStats& out) const;
+    float takeInputPeak(int ch) const { const StreamEngine* e = engine_.load(); return e ? e->takePeak(ch) : 0.f; }
+    float streamGain() const { const StreamEngine* e = engine_.load(); return e ? e->gain() : 1.f; }
     // Parameter change from the UI: tells the host (automation/undo) and updates our copy.
     void editParam(Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue v);
 

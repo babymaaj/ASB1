@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0-alpha (2026-10-30)
+* **New window design**: flat and quiet. Solid warm-black panel, 1 px hairlines, Bahnschrift/Segoe UI type, one green
+  accent that only shows when live. Rows: OUTPUT (click for device list, wheel to step), LEVEL (flat fader: drag,
+  shift-drag fine, wheel, double-click = 0 dB), SIGNAL (L/R meter of what goes to the stream, peak hold + readout),
+  status line, big START STREAM / STREAMING button. Plain GDI only (no GDI+).
+* **Peak metering** in the engine (`meterPlanar`, ~0.1 µs per 256-sample block on the audio thread).
+* CPU: a UI frame costs ~0.75 ms under Wine (the earlier GDI+ draft cost ~23 ms); 30 Hz timer only while the window is
+  open, and frames are drawn only when something visible changed.
+
 ## 0.3.0-alpha (2026-10-30)
 * **Plugin window** (Windows, native Win32, no UI framework): Streaming on/off button, Output device dropdown (Unicode names),
   Level slider with dB readout (automation-friendly begin/perform/end edits), live status (device rate, ms buffered),

@@ -8,6 +8,8 @@
 #include "core/SpscFrameRing.h"
 #include <atomic>
 #include <cstdint>
+#include <cstring>
+#include <type_traits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -64,6 +66,35 @@ public:
     // ---- audio thread ----
     template <class T> void pushPlanar(const T* l, const T* r, size_t n) noexcept { ring_.writePlanar(l, r, n); }
     void pushSilence(size_t n) noexcept { ring_.writeSilence(n); }
+    // Peak meter for the UI (input, pre-gain). Audio thread: a max over the block, a few ns per sample.
+    template <class T> void meterPlanar(const T* l, const T* r, size_t n) noexcept
+    {
+        float a = peak_[0].load(std::memory_order_relaxed), b = peak_[1].load(std::memory_order_relaxed);
+        if constexpr (std::is_same_v<T, float>) {
+            // |x| via the sign bit and max as unsigned ints: same order for non-NaN floats, and it vectorizes.
+            uint32_t ma = 0, mb = 0;
+            for (size_t i = 0; i < n; ++i) {
+                uint32_t x, y;
+                std::memcpy(&x, l + i, 4); std::memcpy(&y, r + i, 4);
+                x &= 0x7fffffffu; y &= 0x7fffffffu;
+                ma = x > ma ? x : ma; mb = y > mb ? y : mb;
+            }
+            if (ma > 0x7f800000u) ma = 0;   // ignore NaN
+            if (mb > 0x7f800000u) mb = 0;
+            float fa, fb; std::memcpy(&fa, &ma, 4); std::memcpy(&fb, &mb, 4);
+            a = fa > a ? fa : a; b = fb > b ? fb : b;
+        } else {
+            for (size_t i = 0; i < n; ++i) {
+                const float x = static_cast<float>(l[i] < 0 ? -l[i] : l[i]);
+                const float y = static_cast<float>(r[i] < 0 ? -r[i] : r[i]);
+                a = x > a ? x : a; b = y > b ? y : b;
+            }
+        }
+        peak_[0].store(a, std::memory_order_relaxed); peak_[1].store(b, std::memory_order_relaxed);
+    }
+    // UI thread: peak since the last call (then reset). Racing with the audio thread can only show one stale frame.
+    float takePeak(int ch) const noexcept { return peak_[ch & 1].exchange(0.f, std::memory_order_relaxed); }
+    float gain() const noexcept { return gain_.load(std::memory_order_relaxed); }
 
     // ---- audio thread: atomics only, never a syscall. The worker notices within ~50 ms. ----
     void requestEnabled(bool on) noexcept { enabled_.store(on, std::memory_order_relaxed); configGen_.fetch_add(1, std::memory_order_release); }
@@ -104,6 +135,7 @@ private:
     std::atomic<double> hostRate_{48000.0};
     std::atomic<int>    hostBlock_{512};
     std::atomic<float>  gain_{1.0f};
+    mutable std::atomic<float> peak_[2]{};
     std::atomic<uint32_t> configGen_{0};
 
     std::atomic<int>      status_{0};

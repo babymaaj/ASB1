@@ -101,6 +101,8 @@ void Processor::passAndStream(ProcessData& d, T* const* in, T* const* out) noexc
     // Path A: transparent passthrough, zero added delay (memcpy only if host gave separate buffers).
     for (int ch = 0; ch < 2; ++ch)
         if (in[ch] != out[ch]) std::memcpy(out[ch], in[ch], sizeof(T) * size_t(n));
+    // Meter (UI): skipped for silent blocks.
+    if (d.inputs[0].silenceFlags != 0x3) engine_.meterPlanar(in[0], in[1], size_t(n));
     // Path B: copy into lock-free ring. Never blocks; drops (counted) on overflow.
     if (enable_) {
         if (d.inputs[0].silenceFlags == 0x3) engine_.pushSilence(size_t(n));

@@ -24,6 +24,8 @@
 using namespace Steinberg;
 using namespace Steinberg::Vst;
 
+namespace asb { double editorAvgPaintUs(); uint64_t editorPaintCount(); }
+
 static bool saveBmp(HWND h, const char* path)
 {
     RECT r; GetClientRect(h, &r);
@@ -77,7 +79,12 @@ int main(int argc, char** argv)
         double ph = 0;
         auto next = std::chrono::steady_clock::now();
         while (run) {
-            for (int i = 0; i < 256; ++i) { l[i] = r[i] = 0.2f * float(std::sin(ph)); ph += 2 * 3.14159265358979 * 440.0 / 48000.0; }
+            static double t = 0;
+            for (int i = 0; i < 256; ++i) {   // tone with a pumping envelope so the meters move like music
+                const float env = float(0.05 + 0.6 * std::pow(0.5 + 0.5 * std::sin(t * 2 * 3.14159265358979 * 1.7), 3.0));
+                l[i] = env * float(std::sin(ph)); r[i] = 0.8f * l[i];
+                ph += 2 * 3.14159265358979 * 440.0 / 48000.0; t += 1.0 / 48000.0;
+            }
             ParameterChanges pc(4);
             // mirror UI edits into the processor like a host does (here: poll the controller's values)
             static double lastEn = -1, lastLvl = -1, lastDev = -1;
@@ -115,6 +122,7 @@ int main(int argc, char** argv)
         }
         Sleep(10);
     }
+    std::printf("editor frames painted: %llu, avg paint %.0f us\n", (unsigned long long)asb::editorPaintCount(), asb::editorAvgPaintUs());
     view->removed();
     view->release();
     run = false; audio.join();
