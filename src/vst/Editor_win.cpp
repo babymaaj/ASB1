@@ -51,7 +51,7 @@ const RECT rOutput{0, 73, kW, 119};
 const RECT rLevel{0, 120, kW, 166};
 const RECT rSignal{0, 167, kW, 213};
 const RECT rFader{kCol, 136, kRight - 70, 150};
-const RECT rButton{kRight - 132, 230, kRight, 268};
+const RECT rButton{kRight - 158, 230, kRight, 268};
 constexpr int kListRowH = 28, kListMaxRows = 7;
 
 // LED meter: two rows of dots
@@ -637,12 +637,12 @@ private:
             const bool hot = shown_.hover == kHoverButton;
             if (on) {
                 fill(rButton, hot ? RGB(170, 222, 140) : cAccent);
-                text(rButton, L"STREAMING", RGB(16, 22, 12), fButton_, DT_CENTER | DT_VCENTER, 3);
+                text(rButton, L"STREAMING", RGB(16, 22, 12), fButton_, DT_CENTER | DT_VCENTER, 2);
             } else {
                 fill(rButton, hot ? RGB(34, 34, 36) : cPanel);
                 frame(rButton, hot ? cDim : cFaint);
                 hline(rButton.left + 1, rButton.right - 1, rButton.top + 1, RGB(48, 48, 50));   // top bevel
-                text(rButton, L"START STREAM", cInk, fButton_, DT_CENTER | DT_VCENTER, 3);
+                text(rButton, L"START STREAM", cInk, fButton_, DT_CENTER | DT_VCENTER, 2);
             }
         }
 
