@@ -162,7 +162,7 @@ jobs:
         with: { name: ASB-Setup, path: dist }
 
   mac:
-    runs-on: macos-latest
+    runs-on: macos-15-intel   # Apple Silicon pool is often capacity-limited; still builds a universal binary
     steps:
       - uses: actions/checkout@v4
       - name: Fetch VST3 SDK
