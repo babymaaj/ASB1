@@ -7,7 +7,7 @@ git clone <this repo> asio-stream-bridge && cd asio-stream-bridge
 git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party\vst3sdk
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
-ctest --test-dir build -C Release          :: core tests
+ctest --test-dir build -C Release          :: core + state tests
 build\bin\Release\validator.exe build\VST3\Release\ASIOStreamBridge.vst3   :: if the validator target was built
 ```
 The build runs the Steinberg validator automatically after linking (`SMTG_RUN_VST_VALIDATOR=ON`). Static CRT (/MT) is forced for the project and SDK.
@@ -25,4 +25,14 @@ git clone --depth 1 --recursive --shallow-submodules https://github.com/steinber
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ./build/core_tests ; ./build/bin/Release/processor_bench
 ```
-Options: `-DASB_BUILD_VST3=OFF` (core only, no SDK needed), `-DASB_BUILD_TESTS=OFF`, `-DASB_VST3_SDK_PATH=<path>`.
+Options: `-DASB_BUILD_VST3=OFF` (core only, no SDK needed), `-DASB_BUILD_TESTS=OFF`, `-DASB_VST3_SDK_PATH=<path>`,
+`-DASB_RUN_VALIDATOR=OFF` (skip the post-link validator, e.g. cross-builds).
+
+## Windows build from Linux (check build: MinGW + optional Wine)
+```bash
+sudo apt install g++-mingw-w64-x86-64-posix   # + wine64 pulseaudio to run the .exe files
+./tools/cross_check_windows.sh
+```
+Compiles the Windows engine/plugin/tests with MinGW and, if Wine is installed, runs `core_tests.exe`, `state_tests.exe` and
+the Windows validator on the Windows DLL. Applies two MinGW-only tweaks to your local (git-ignored) SDK copy. Release builds
+should still be MSVC.

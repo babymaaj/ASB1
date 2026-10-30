@@ -6,7 +6,7 @@
 #include "core/DriftResampler.h"
 
 #include <windows.h>
-#include <initguid.h>   // defines KSDATAFORMAT_SUBTYPE_IEEE_FLOAT in this TU only
+#include <initguid.h>   // emits PKEY_Device_FriendlyName in this TU
 #include <mmreg.h>
 #include <ks.h>
 #include <ksmedia.h>
@@ -17,8 +17,7 @@
 #include <algorithm>
 #include <chrono>
 
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "avrt.lib")
+// Libraries (ole32, avrt, uuid) are linked from CMakeLists.txt so MSVC and MinGW both work.
 
 namespace asb {
 
@@ -52,6 +51,13 @@ std::wstring toWide(const std::string& s)
     if (n > 1) MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, w.data(), n);
     return w;
 }
+
+// KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, defined locally so we don't depend on initguid.h/ksmedia.h include order.
+constexpr GUID kSubtypeIeeeFloat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+
+// The audio thread never signals the worker (no syscalls on the RT thread), so an idle
+// worker polls the config generation this often. 20 wakeups/s is negligible CPU.
+constexpr DWORD kPollMs = 50;
 
 double threadCpuMs()
 {
@@ -102,7 +108,7 @@ std::vector<DeviceInfo> enumerateRenderDevices()
 
 struct StreamEngine::Impl {
     HANDLE thread = nullptr;
-    HANDLE wakeEvt = nullptr;       // manual-reset? auto-reset: config changed / quit
+    HANDLE wakeEvt = nullptr;       // auto-reset: control-thread config change / quit
     std::atomic<bool> quit{false};
 };
 
@@ -122,6 +128,26 @@ void StreamEngine::bump() noexcept
     configGen_.fetch_add(1, std::memory_order_release);
     if (impl_ && impl_->wakeEvt) SetEvent(impl_->wakeEvt);
 }
+
+int StreamEngine::indexOfDeviceId(const std::string& id) const noexcept
+{
+    if (id.empty()) return 0;
+    for (size_t i = 0; i < devices_.size(); ++i)
+        if (devices_[i].id == id) return int(i);
+    return -1;
+}
+
+std::string StreamEngine::resolveDeviceId(int idx)
+{
+    if (idx <= 0) return {};
+    if (devices_.empty()) {                 // no snapshot given (e.g. asb_probe): enumerate here
+        auto d = enumerateRenderDevices();
+        return size_t(idx) < d.size() ? d[size_t(idx)].id : std::string("\x01missing");
+    }
+    return size_t(idx) < devices_.size() ? devices_[size_t(idx)].id : std::string("\x01missing");
+}
+
+bool StreamEngine::running() const noexcept { return impl_ && impl_->thread; }
 
 void StreamEngine::start()
 {
@@ -154,6 +180,8 @@ StreamStats StreamEngine::stats() const noexcept
     s.deviceRate = devRate_.load();
     s.driftPpm = driftPpm_.load();
     s.workerCpuMs = cpuMs_.load();
+    s.deviceFrames = devFrames_.load();
+    s.resyncs = resyncs_.load();
     return s;
 }
 
@@ -185,15 +213,13 @@ void StreamEngine::workerMain()
                                     __uuidof(IMMDeviceEnumerator), (void**)enumerator.put())))
             return false;
         ComPtr<IMMDevice> dev;
-        const int idx = deviceIndex_.load();
+        const std::string id = resolveDeviceId(deviceIndex_.load());
         HRESULT hr;
-        if (idx <= 0) {
+        if (id.empty()) {
             hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, dev.put());
         } else {
-            // NOTE: indexes into the same sorted list the controller showed (race if devices change).
-            auto devs = enumerateRenderDevices();
-            if (size_t(idx) >= devs.size()) return false;
-            hr = enumerator->GetDevice(toWide(devs[size_t(idx)].id).c_str(), dev.put());
+            if (id[0] == '\x01') return false;   // index not in the list
+            hr = enumerator->GetDevice(toWide(id).c_str(), dev.put());
         }
         if (FAILED(hr)) return false;
         if (FAILED(dev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)client.put()))) return false;
@@ -214,10 +240,10 @@ void StreamEngine::workerMain()
         wf.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
         wf.Samples.wValidBitsPerSample = 32;
         wf.dwChannelMask = SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT;
-        wf.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+        wf.SubFormat = kSubtypeIeeeFloat;
 
         hr = client->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                                AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTSRCFORMAT |
+                                AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
                                 AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
                                 0, 0, &wf.Format, nullptr);
         if (FAILED(hr)) return false;
@@ -226,7 +252,8 @@ void StreamEngine::workerMain()
         if (FAILED(client->GetService(__uuidof(IAudioRenderClient), (void**)render.put()))) return false;
 
         const double host = hostRate_.load();
-        rs.configure(&ring_, host, double(devRate), size_t(host * 0.03)); // 30 ms target
+        const int block = hostBlock_.load();
+        rs.configure(&ring_, host, double(devRate), targetFillFrames(host, block), resyncAboveFrames(host, block));
         ring_.discardAll();
         devRate_.store(double(devRate));
 
@@ -249,14 +276,14 @@ void StreamEngine::workerMain()
             closeDevice();
             retryAt = 0;
         }
-        if (!want) {                                // idle: block with no timeout -> zero CPU
+        if (!want) {                                // idle: ~20 wakeups/s to notice audio-thread requests
             status_.store(int(StreamStatus::Off));
-            WaitForSingleObject(impl_->wakeEvt, INFINITE);
+            WaitForSingleObject(impl_->wakeEvt, kPollMs);
             continue;
         }
         if (!open) {
             const ULONGLONG now = GetTickCount64();
-            if (now < retryAt) { WaitForSingleObject(impl_->wakeEvt, DWORD(retryAt - now)); continue; }
+            if (now < retryAt) { WaitForSingleObject(impl_->wakeEvt, DWORD(std::min<ULONGLONG>(retryAt - now, kPollMs))); continue; }
             status_.store(int(StreamStatus::Connecting));
             if (!openDevice()) {
                 closeDevice();
@@ -291,8 +318,10 @@ void StreamEngine::workerMain()
             done += n;
         }
         render->ReleaseBuffer(frames, 0);
+        devFrames_.fetch_add(frames, std::memory_order_relaxed);
 
         underruns_.store(rs.underruns());
+        resyncs_.store(rs.resyncs());
         driftPpm_.store(rs.adjust() * 1e6);
         fill_.store(float(ring_.readableFrames()) / float(ring_.capacity()));
         cpuMs_.store(float(threadCpuMs()));

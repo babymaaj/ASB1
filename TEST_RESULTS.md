@@ -1,5 +1,28 @@
 # Test results (what was ACTUALLY run)
 
+## 0.2.0 — 2026-10-30 (Linux sandbox + MinGW cross-compiler + Wine)
+Environment: GCC 13.3 (Linux), MinGW-w64 GCC 13.2 (Windows target), Wine 9 (`wine64`), PulseAudio null sinks as fake
+output devices ("VirtualCable", "Speakers", 44.1 kHz). Still **no real Windows, MSVC, FL Studio, Focusrite, OBS, Discord or Voxengo.**
+
+| Test | Linux build | Windows build (run in Wine) |
+|---|---|---|
+| `core_tests` (ring, 8 drift cases incl. 1024/2048 blocks with 0 resyncs, stall recovery, cubic HF, gain/fade, UTF-8) | PASS | PASS |
+| `state_tests` (v2 round trip, v1 load, ID resolution, garbage rejected) | PASS | PASS |
+| Steinberg validator on the plugin | 47/47 | **47/47 (Windows validator.exe on the Windows DLL)** |
+| `processor_bench` (bit-exact passthrough 32/64-bit, separate + in-place; paced 20 s) | PASS | n/a (Linux-only) |
+| `asb_probe` real WASAPI streaming, 48k → 44.1k device | n/a | **status=Streaming, 0 underruns, 0 overflow, fill settles at ~30 ms target** |
+
+Key numbers:
+* Before the resync fix, `asb_probe` under Wine showed the buffer stuck at ~97 % (~600 ms late) with 3.3 k frames dropped;
+  the device consumed ~28 k frames/s for the first 2 s instead of 44.1 k. After: fill ≈ 0.03–0.04 (≈ target), drift settles.
+  Wine's audio start is slow, so 5–11 startup resyncs were counted there; expect ~0 on real Windows.
+* Interpolation HF @ worst position: 5 k −0.05 dB, 10 k −0.61 dB, 15 k −2.69 dB (linear was −0.47 / −2.01 / −5.11).
+* Gain/fade max per-sample step on 0.5 DC: 0.0025 (an unsmoothed change would be 0.5).
+* `process()` paced, live consumer: mean ≈1.3 µs/block @256; idle 5 s with stream OFF: 5.3 ms CPU (was 0.05 ms; 50 ms poll).
+* Worker CPU under Wine: ~6 ms per second of streaming (~0.6 % of a core) — Wine number, not Windows.
+
+## 0.1.0 — 2026-10-28 (OX session)
+
 **Environment:** Linux x86_64 cloud sandbox, GCC 13.3, CMake 3.28, Ninja, VST3 SDK 3.8.1. No Windows, no MSVC, no MinGW, no audio hardware,
 **no Focusrite, no FL Studio, no Voxengo Recorder, no Discord/OBS.** Date: 2026-10-28.
 

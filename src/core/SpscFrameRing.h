@@ -82,6 +82,17 @@ public:
         return n;
     }
 
+    // Consumer-side: drop up to n of the oldest frames. Returns frames dropped.
+    size_t discard(size_t n) noexcept
+    {
+        const uint64_t t = tail_.load(std::memory_order_relaxed);
+        const uint64_t h = head_.load(std::memory_order_acquire);
+        const size_t avail = static_cast<size_t>(h - t);
+        const size_t d = n < avail ? n : avail;
+        tail_.store(t + d, std::memory_order_release);
+        return d;
+    }
+
     // Consumer-side discard (used when re-priming after a device change).
     void discardAll() noexcept
     {

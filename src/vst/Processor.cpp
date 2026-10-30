@@ -1,5 +1,6 @@
 #include "vst/Processor.h"
 #include "vst/Ids.h"
+#include "vst/State.h"
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/vstspeaker.h"
@@ -22,6 +23,10 @@ tresult PLUGIN_API Processor::initialize(FUnknown* context)
     if (r != kResultOk) return r;
     addAudioInput(STR16("Stereo In"), SpeakerArr::kStereo);
     addAudioOutput(STR16("Stereo Out"), SpeakerArr::kStereo);
+    // Same list (same order, same cap) the controller builds, so indices mean the same device on both sides.
+    auto devices = enumerateRenderDevices();
+    if (devices.size() > size_t(kMaxDevices)) devices.resize(kMaxDevices);
+    engine_.setDevices(std::move(devices));
     engine_.setGain(normToGain(level_));
     return kResultOk;
 }
@@ -47,7 +52,9 @@ tresult PLUGIN_API Processor::canProcessSampleSize(int32 s)
 tresult PLUGIN_API Processor::setupProcessing(ProcessSetup& setup)
 {
     sampleRate_ = setup.sampleRate;
+    maxBlock_ = setup.maxSamplesPerBlock;
     engine_.setHostSampleRate(setup.sampleRate);
+    engine_.setHostBlockSize(setup.maxSamplesPerBlock);
     return AudioEffect::setupProcessing(setup);
 }
 
@@ -55,6 +62,7 @@ tresult PLUGIN_API Processor::setActive(TBool state)
 {
     if (state) {
         engine_.setHostSampleRate(sampleRate_);
+        engine_.setHostBlockSize(maxBlock_);
         engine_.setGain(normToGain(level_));
         engine_.setDeviceIndex(device_);
         engine_.setEnabled(enable_);
@@ -67,13 +75,17 @@ tresult PLUGIN_API Processor::setActive(TBool state)
 
 void Processor::applyParam(ParamID id, double v) noexcept
 {
-    // Called from process(): only atomics are touched (engine setters are atomic + SetEvent/notify).
+    // Called from process() on the audio thread: atomics only, no syscalls (worker polls).
     switch (id) {
-    case kParamStreamEnable: enable_ = v >= 0.5; engine_.setEnabled(enable_); break;
+    case kParamStreamEnable: {
+        const bool on = v >= 0.5;
+        if (on != enable_) { enable_ = on; engine_.requestEnabled(on); }
+        break;
+    }
     case kParamOutputLevel:  level_ = v; engine_.setGain(normToGain(v)); break;
     case kParamDevice: {
         const int idx = static_cast<int>(v * (kMaxDevices - 1) + 0.5);
-        if (idx != device_) { device_ = idx; engine_.setDeviceIndex(idx); }
+        if (idx != device_) { device_ = idx; engine_.requestDeviceIndex(idx); }
         break;
     }
     default: break;
@@ -132,10 +144,10 @@ tresult PLUGIN_API Processor::setState(IBStream* state)
 {
     if (!state) return kResultFalse;
     IBStreamer s(state, kLittleEndian);
-    int32 ver = 0; if (!s.readInt32(ver) || ver != 1) return kResultFalse;
-    int32 en = 0, dev = 0; double lvl = 0;
-    if (!s.readInt32(en) || !s.readDouble(lvl) || !s.readInt32(dev)) return kResultFalse;
-    enable_ = en != 0; level_ = lvl; device_ = dev;
+    PluginState st;
+    if (!readState(s, st)) return kResultFalse;
+    enable_ = st.enable; level_ = st.level;
+    device_ = resolveSavedDevice(st, engine_.devices());
     engine_.setGain(normToGain(level_));
     engine_.setDeviceIndex(device_);
     engine_.setEnabled(enable_);
@@ -146,11 +158,11 @@ tresult PLUGIN_API Processor::getState(IBStream* state)
 {
     if (!state) return kResultFalse;
     IBStreamer s(state, kLittleEndian);
-    s.writeInt32(1);
-    s.writeInt32(enable_ ? 1 : 0);
-    s.writeDouble(level_);
-    s.writeInt32(device_);
-    return kResultOk;
+    PluginState st;
+    st.enable = enable_; st.level = level_; st.deviceIndex = device_;
+    const auto& devs = engine_.devices();
+    if (device_ > 0 && size_t(device_) < devs.size()) st.deviceId = devs[size_t(device_)].id;
+    return writeState(s, st) ? kResultOk : kResultFalse;
 }
 
 } // namespace asb

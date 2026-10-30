@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(ASIOStreamBridge VERSION 0.1.0 LANGUAGES CXX)
+project(ASIOStreamBridge VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,6 +15,7 @@ endif()
 
 option(ASB_BUILD_VST3  "Build the VST3 plugin (needs VST3 SDK)" ON)
 option(ASB_BUILD_TESTS "Build core tests/benchmarks" ON)
+option(ASB_RUN_VALIDATOR "Run the Steinberg validator after linking the plugin" ON)  # OFF for cross-builds
 set(ASB_VST3_SDK_PATH "${CMAKE_CURRENT_SOURCE_DIR}/third_party/vst3sdk" CACHE PATH "Path to VST3 SDK checkout")
 
 # ---- platform-independent core + engine (no VST3 dependency) ----
@@ -28,6 +29,9 @@ set_target_properties(asb_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(asb_engine PUBLIC src)
 find_package(Threads REQUIRED)
 target_link_libraries(asb_engine PUBLIC Threads::Threads)
+if(WIN32)
+  target_link_libraries(asb_engine PUBLIC ole32 avrt uuid)
+endif()
 if(MSVC)
   target_compile_options(asb_engine PRIVATE /W4 /permissive-)
   target_compile_definitions(asb_engine PUBLIC _CRT_SECURE_NO_WARNINGS)
@@ -53,7 +57,7 @@ if(ASB_BUILD_VST3)
   set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)   # no heavy UI framework
   set(SMTG_CREATE_PLUGIN_LINK OFF CACHE BOOL "" FORCE)      # we install manually / via script
-  set(SMTG_RUN_VST_VALIDATOR ON CACHE BOOL "" FORCE)
+  set(SMTG_RUN_VST_VALIDATOR ${ASB_RUN_VALIDATOR} CACHE BOOL "" FORCE)
   add_subdirectory("${ASB_VST3_SDK_PATH}" "${CMAKE_BINARY_DIR}/vst3sdk" EXCLUDE_FROM_ALL)
   smtg_enable_vst3_sdk()
 
@@ -61,6 +65,13 @@ if(ASB_BUILD_VST3)
     src/vst/Entry.cpp src/vst/Processor.cpp src/vst/Controller.cpp)
   target_include_directories(ASIOStreamBridge PRIVATE src)
   target_link_libraries(ASIOStreamBridge PRIVATE sdk asb_engine)
+
+  if(ASB_BUILD_TESTS)
+    add_executable(state_tests tests/state_tests.cpp "${ASB_VST3_SDK_PATH}/public.sdk/source/common/memorystream.cpp")
+    target_include_directories(state_tests PRIVATE src)
+    target_link_libraries(state_tests PRIVATE sdk asb_engine)
+    add_test(NAME state_tests COMMAND state_tests)
+  endif()
 
   if(ASB_BUILD_TESTS AND NOT WIN32)  # bench uses /proc + clock_gettime (Linux only for now)
     add_executable(processor_bench tests/processor_bench.cpp src/vst/Processor.cpp)

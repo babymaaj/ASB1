@@ -1,0 +1,34 @@
+# Changelog
+
+## 0.2.0-alpha (2026-10-30, Maaj session)
+Built on OX's 0.1.0. Everything below is covered by tests; see TEST_RESULTS.md.
+
+**Windows build fixes (found by actually compiling it)**
+* `AUDCLNT_STREAMFLAGS_AUTOCONVERTSRCFORMAT` does not exist → `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`. Would have failed MSVC too.
+* `KSDATAFORMAT_SUBTYPE_IEEE_FLOAT` link error (initguid/ksmedia include order) → GUID defined locally.
+* Windows libs (ole32, avrt, uuid) linked from CMake instead of MSVC-only `#pragma comment`.
+
+**Streaming fixes**
+* **Latency could get stuck at ~600 ms.** If the output device starts slowly or stalls (device switch, USB glitch, sleep),
+  the backlog never drained (drift control only moves ±0.5 %, i.e. minutes). Added hard resync: above 3× target fill the
+  oldest audio is dropped back to target. Counted in `StreamStats.resyncs`. Seen and fixed under real WASAPI (Wine).
+* **Big ASIO buffers would underrun.** Target latency is now max(30 ms, 2 host blocks); FL at 1024/2048 samples is covered.
+  `StreamEngine::setHostBlockSize`, fed from `setupProcessing.maxSamplesPerBlock`.
+* Linear → 4-point cubic interpolation: worst-case HF loss 2.0 → 0.6 dB @10 kHz, 5.1 → 2.7 dB @15 kHz.
+* Output level is smoothed (~4 ms) and audio fades in after every (re)start/underrun → no zipper noise or clicks.
+
+**Real-time safety (KNOWN_ISSUES #3)**
+* The audio thread no longer makes syscalls. `process()` uses `requestEnabled/requestDeviceIndex/setGain` (atomics only);
+  the worker polls every 50 ms when idle. Control-thread setters (`setEnabled` etc.) still wake it immediately.
+
+**Devices (KNOWN_ISSUES #4, #6)**
+* Saved state v2 stores the device's Windows endpoint ID; on load the ID wins, so plugging in a new device no longer
+  changes which device a project uses. If the saved device is gone, it falls back to System default (not a random neighbour).
+  v1 (0.1.0) projects still load.
+* Processor and controller share one device-list snapshot per instance (no more independent enumerations racing).
+* Device names are proper Unicode (accents, CJK, emoji). Device and Streaming params round-trip their text (validator infos gone).
+
+**Tooling**
+* `tools/cross_check_windows.sh` + `cmake/mingw-w64.cmake`: compile and test the Windows build from Linux.
+* `ASB_RUN_VALIDATOR` option (default ON) so cross-builds can skip the post-link validator.
+* New `tests/state_tests.cpp`; `asb_probe` prints resyncs.

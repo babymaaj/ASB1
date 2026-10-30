@@ -29,6 +29,26 @@ void StreamEngine::bump() noexcept
     if (impl_) { std::lock_guard<std::mutex> lk(impl_->m); impl_->cv.notify_all(); }
 }
 
+int StreamEngine::indexOfDeviceId(const std::string& id) const noexcept
+{
+    if (id.empty()) return 0;
+    for (size_t i = 0; i < devices_.size(); ++i)
+        if (devices_[i].id == id) return int(i);
+    return -1;
+}
+
+std::string StreamEngine::resolveDeviceId(int idx)
+{
+    if (idx <= 0) return {};
+    if (devices_.empty()) {                 // no snapshot given (e.g. asb_probe): enumerate here
+        auto d = enumerateRenderDevices();
+        return size_t(idx) < d.size() ? d[size_t(idx)].id : std::string("\x01missing");
+    }
+    return size_t(idx) < devices_.size() ? devices_[size_t(idx)].id : std::string("\x01missing");
+}
+
+bool StreamEngine::running() const noexcept { return impl_ && impl_->th.joinable(); }
+
 void StreamEngine::start()
 {
     if (impl_->th.joinable()) return;
@@ -54,6 +74,8 @@ StreamStats StreamEngine::stats() const noexcept
     s.deviceRate = devRate_.load();
     s.driftPpm = driftPpm_.load();
     s.workerCpuMs = cpuMs_.load();
+    s.deviceFrames = devFrames_.load();
+    s.resyncs = resyncs_.load();
     return s;
 }
 
@@ -78,14 +100,16 @@ void StreamEngine::workerMain()
             if (impl_->quit) return;
             if (!enabled_.load()) {                       // idle: block, zero CPU
                 active = false; status_.store(0);
-                impl_->cv.wait(lk, [&] { return impl_->quit || enabled_.load(); });
+                // poll: the audio thread never notifies (no syscalls on the RT thread)
+                impl_->cv.wait_for(lk, std::chrono::milliseconds(50), [&] { return impl_->quit || enabled_.load(); });
                 continue;
             }
         }
         if (!active || seenGen != configGen_.load(std::memory_order_acquire)) {
             seenGen = configGen_.load(std::memory_order_acquire);
             const double host = hostRate_.load();
-            rs.configure(&ring_, host, devRate, size_t(host * 0.03));
+            const int block = hostBlock_.load();
+            rs.configure(&ring_, host, devRate, targetFillFrames(host, block), resyncAboveFrames(host, block));
             ring_.discardAll();
             devRate_.store(devRate);
             status_.store(2);
@@ -94,7 +118,9 @@ void StreamEngine::workerMain()
         }
         const size_t frames = 480;                         // 10 ms
         rs.render(out.data(), frames, gain_.load(std::memory_order_relaxed));
+        devFrames_.fetch_add(frames, std::memory_order_relaxed);
         underruns_.store(rs.underruns());
+        resyncs_.store(rs.resyncs());
         driftPpm_.store(rs.adjust() * 1e6);
         fill_.store(float(ring_.readableFrames()) / float(ring_.capacity()));
         cpuMs_.store(float(threadCpuMs()));

@@ -36,6 +36,7 @@ private:
     int    device_ = 0;
     int    meterCountdown_ = 0;
     double sampleRate_ = 48000.0;
+    int    maxBlock_ = 512;
 };
 
 } // namespace asb

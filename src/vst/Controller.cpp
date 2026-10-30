@@ -2,6 +2,8 @@
 #include <utility>
 #include <vector>
 #include "vst/Ids.h"
+#include "vst/State.h"
+#include "core/Utf8.h"
 #include "engine/StreamEngine.h"
 #include "base/source/fstreamer.h"
 #include "pluginterfaces/base/ustring.h"
@@ -40,9 +42,23 @@ public:
     {
         UString u(s, 128);
         const size_t i = size_t(toPlain(v) + 0.5);
-        if (i < devs_.size()) u.fromAscii(devs_[i].name.c_str()); else u.fromAscii("(unavailable)");
+        if (i < devs_.size()) {
+            const std::u16string w = utf8ToUtf16(devs_[i].name);
+            u.assign(reinterpret_cast<const char16*>(w.c_str()), int32(w.size()) + 1);
+        } else {
+            u.fromAscii("(unavailable)");
+        }
     }
-    bool fromString(const TChar*, ParamValue&) const override { return false; }
+    bool fromString(const TChar* s, ParamValue& v) const override
+    {
+        // exact name match (lets hosts/validator round-trip the displayed string)
+        for (size_t i = 0; i < devs_.size(); ++i) {
+            const std::u16string w = utf8ToUtf16(devs_[i].name);
+            if (std::u16string(reinterpret_cast<const char16_t*>(s)) == w) { v = toNormalized(double(i)); return true; }
+        }
+        return false;
+    }
+    const std::vector<DeviceInfo>& devices() const { return devs_; }
 private:
     std::vector<DeviceInfo> devs_;
 };
@@ -52,7 +68,10 @@ tresult PLUGIN_API Controller::initialize(FUnknown* context)
     tresult r = EditController::initialize(context);
     if (r != kResultOk) return r;
 
-    parameters.addParameter(STR16("Streaming"), nullptr, 1, 0.0, ParameterInfo::kCanAutomate, kParamStreamEnable);
+    auto* streaming = new StringListParameter(STR16("Streaming"), kParamStreamEnable, nullptr, ParameterInfo::kCanAutomate | ParameterInfo::kIsList);
+    streaming->appendString(STR16("Off"));
+    streaming->appendString(STR16("On"));
+    parameters.addParameter(streaming);
     parameters.addParameter(new LevelParam);
 
     // Device list: enumerated on the main thread once per plugin instance (reopen plugin to refresh).
@@ -70,11 +89,12 @@ tresult PLUGIN_API Controller::setComponentState(IBStream* state)
 {
     if (!state) return kResultFalse;
     IBStreamer s(state, kLittleEndian);
-    int32 ver = 0, en = 0, dev = 0; double lvl = 0;
-    if (!s.readInt32(ver) || ver != 1 || !s.readInt32(en) || !s.readDouble(lvl) || !s.readInt32(dev)) return kResultFalse;
-    setParamNormalized(kParamStreamEnable, en ? 1.0 : 0.0);
-    setParamNormalized(kParamOutputLevel, lvl);
-    if (auto* p = parameters.getParameter(kParamDevice)) setParamNormalized(kParamDevice, p->toNormalized(dev));
+    PluginState st;
+    if (!readState(s, st)) return kResultFalse;
+    setParamNormalized(kParamStreamEnable, st.enable ? 1.0 : 0.0);
+    setParamNormalized(kParamOutputLevel, st.level);
+    if (auto* p = static_cast<DeviceParam*>(parameters.getParameter(kParamDevice)))
+        setParamNormalized(kParamDevice, p->toNormalized(resolveSavedDevice(st, p->devices())));
     return kResultOk;
 }
 

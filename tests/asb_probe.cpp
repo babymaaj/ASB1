@@ -29,7 +29,7 @@ int main(int argc, char** argv)
     std::printf("device [%d] %s, host rate %.0f, %.0f s\n", idx, idx >= 0 && size_t(idx) < devs.size() ? devs[idx].name.c_str() : "?", sr, secs);
 
     StreamEngine e;
-    e.setHostSampleRate(sr); e.setGain(0.25f); e.setDeviceIndex(idx); e.setEnabled(true); e.start();
+    e.setHostSampleRate(sr); e.setHostBlockSize(256); e.setGain(0.25f); e.setDeviceIndex(idx); e.setEnabled(true); e.start();
 
     const char* names[] = {"Off", "Connecting", "Streaming", "Error"};
     const auto t0 = clk::now(); uint64_t sent = 0; double ph = 0; std::vector<float> b(2048);
@@ -43,8 +43,8 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
         if (clk::now() - lastPrint > std::chrono::seconds(1)) {
             lastPrint = clk::now(); auto s = e.stats();
-            std::printf("  status=%-10s devRate=%.0f fill=%.3f underruns=%llu overflowFrames=%llu drift=%.1fppm workerCpu=%.0fms\n",
-                        names[int(s.status)], s.deviceRate, s.bufferFill, (unsigned long long)s.underruns, (unsigned long long)s.overflowFrames, s.driftPpm, s.workerCpuMs);
+            std::printf("  status=%-10s devRate=%.0f fill=%.3f underruns=%llu overflowFrames=%llu drift=%.1fppm workerCpu=%.0fms resyncs=%llu\n",
+                        names[int(s.status)], s.deviceRate, s.bufferFill, (unsigned long long)s.underruns, (unsigned long long)s.overflowFrames, s.driftPpm, s.workerCpuMs, (unsigned long long)s.resyncs);
         }
     }
     e.stop();
