@@ -3,3 +3,4 @@ third_party/vst3sdk
 build-*/
 *.bmp
 dist/
+third_party/AudioUnitSDK

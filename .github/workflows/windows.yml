@@ -165,27 +165,39 @@ jobs:
     runs-on: macos-15-intel   # Apple Silicon pool is often capacity-limited; still builds a universal binary
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch VST3 SDK
-        run: git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party/vst3sdk
+      - name: Fetch VST3 SDK + Apple AudioUnitSDK
+        run: |
+          git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party/vst3sdk
+          git clone --depth 1 https://github.com/apple/AudioUnitSDK.git third_party/AudioUnitSDK
       - name: Version
         id: ver
         run: echo "version=$(grep -oE 'project\(ASB VERSION [0-9.]+' CMakeLists.txt | grep -oE '[0-9.]+$')" >> "$GITHUB_OUTPUT"
-      - name: Configure (universal arm64 + x86_64)
+      - name: Configure (Xcode, universal arm64 + x86_64; Xcode is required for the AU)
         run: |
           mkdir -p out
           set -o pipefail
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DASB_RUN_VALIDATOR=OFF 2>&1 | tee out/configure-log.txt
+          cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DASB_RUN_VALIDATOR=OFF 2>&1 | tee out/configure-log.txt
+          grep -q "SMTG_AUDIOUNIT_SDK_PATH is set" out/configure-log.txt || { echo "::error::AudioUnitSDK not detected"; exit 1; }
       - name: Build
         run: |
           set -o pipefail
-          cmake --build build --config Release -j 4 2>&1 | tee out/build-log.txt
-          find build -name "ASB.vst3" -maxdepth 4
+          cmake --build build --config Release -- -quiet -jobs 4 2>&1 | tee out/build-log.txt
+          find build -maxdepth 4 \( -name "ASB.vst3" -o -name "ASB.component" \)
           lipo -info build/VST3/Release/ASB.vst3/Contents/MacOS/ASB
+          lipo -info build/VST3/Release/ASB.component/Contents/MacOS/ASB
       - name: Steinberg validator
         run: |
           set -o pipefail
           V=$(find build -name validator -type f -perm +111 | head -1); echo "validator: $V"
           "$V" -e build/VST3/Release/ASB.vst3 2>&1 | tee out/validator-log.txt
+      - name: Apple AU validation (auval, strict)
+        run: |
+          set -o pipefail
+          ls ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          auval -a 2>&1 | grep -i maai || true
+          auval -strict -v aufx Asb1 Maai 2>&1 | tee out/auval-log.txt
+          grep -q "AU VALIDATION SUCCEEDED" out/auval-log.txt
       - name: Device probe
         run: |
           P=$(find build -name asb_probe -type f -perm +111 | head -1)
@@ -217,25 +229,31 @@ jobs:
           [ -s err.txt ] || tail -40 out/*-log.txt > err.txt 2>/dev/null || true
           msg=$(sed 's/%/%25/g' err.txt | awk '{printf "%s%%0A", $0}')
           echo "::error title=macOS build/test errors::${msg}"
-          for f in validator probe; do
+          for f in validator auval probe; do
             [ -f out/$f-log.txt ] || continue
             m=$(tail -45 out/$f-log.txt | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=mac $f tail::${m}"
           done
-      - name: Package (.pkg installer, ad-hoc signed)
+      - name: Package (.pkg installer with VST3 + AU, ad-hoc signed)
         if: success()
         run: |
           v="${{ steps.ver.outputs.version }}"
-          mkdir -p dist pkgroot/Library/Audio/Plug-Ins/VST3
-          cp -R build/VST3/Release/ASB.vst3 pkgroot/Library/Audio/Plug-Ins/VST3/
-          # Ad-hoc signature (required for Apple Silicon). A Developer ID signature + notarization replaces this
-          # once an Apple Developer account is set up (see SIGNING.md).
-          codesign --force --deep --sign - pkgroot/Library/Audio/Plug-Ins/VST3/ASB.vst3
-          codesign --verify --deep --strict pkgroot/Library/Audio/Plug-Ins/VST3/ASB.vst3
-          pkgbuild --root pkgroot --identifier lol.maai.asb.vst3 --version "$v" --install-location / dist/asb-vst3.pkg
-          productbuild --package dist/asb-vst3.pkg --identifier lol.maai.asb --version "$v" "dist/ASB-$v-mac.pkg"
-          rm dist/asb-vst3.pkg
-          (cd pkgroot/Library/Audio/Plug-Ins/VST3 && zip -qry "$GITHUB_WORKSPACE/dist/ASB-$v-mac-vst3.zip" ASB.vst3)
+          P=pkgroot/Library/Audio/Plug-Ins
+          mkdir -p dist $P/VST3 $P/Components
+          cp -R build/VST3/Release/ASB.vst3 $P/VST3/
+          # the build links plugin.vst3 inside the component; ship a real copy (-L follows the link)
+          cp -RL build/VST3/Release/ASB.component $P/Components/
+          test -d $P/Components/ASB.component/Contents/Resources/plugin.vst3 && ! test -L $P/Components/ASB.component/Contents/Resources/plugin.vst3
+          # Ad-hoc signatures (required on Apple Silicon). Developer ID + notarization replace these later (SIGNING.md).
+          codesign --force --deep --sign - $P/VST3/ASB.vst3
+          codesign --force --deep --sign - $P/Components/ASB.component
+          codesign --verify --deep --strict $P/VST3/ASB.vst3
+          codesign --verify --deep --strict $P/Components/ASB.component
+          pkgbuild --root pkgroot --identifier lol.maai.asb --version "$v" --install-location / dist/asb-plugins.pkg
+          productbuild --package dist/asb-plugins.pkg --identifier lol.maai.asb.installer --version "$v" "dist/ASB-$v-mac.pkg"
+          rm dist/asb-plugins.pkg
+          (cd $P/VST3 && zip -qry "$GITHUB_WORKSPACE/dist/ASB-$v-mac-vst3.zip" ASB.vst3)
+          (cd $P/Components && zip -qry "$GITHUB_WORKSPACE/dist/ASB-$v-mac-au.zip" ASB.component)
           cp -R build/VST3/Release/ASB.vst3 out/ 2>/dev/null || true
           ls -la dist
       - uses: actions/upload-artifact@v4
@@ -267,10 +285,10 @@ jobs:
 
           ---
           **Windows:** run \`ASB-Setup-$v.exe\`, then in FL Studio: Options > Manage plugins > Find plugins.
-          **macOS:** open \`ASB-$v-mac.pkg\` (if macOS blocks it: right-click > Open, or System Settings > Privacy & Security > Open Anyway), then rescan plugins in your DAW. For Discord/OBS on Mac install the free [BlackHole 2ch](https://existential.audio/blackhole/) and pick it as ASB's OUTPUT.
+          **macOS:** open \`ASB-$v-mac.pkg\` (installs VST3 + Audio Unit; if macOS blocks it: right-click > Open, or System Settings > Privacy & Security > Open Anyway), then rescan plugins in your DAW. In Logic/GarageBand ASB appears under Audio Units > maai > ASB. For Discord/OBS on Mac install the free [BlackHole 2ch](https://existential.audio/blackhole/) and pick it as ASB's OUTPUT.
           EOF2
           (cd win && zip -qr "../dist/ASB-$v-win-vst3.zip" ASB.vst3)
           ls -la dist
           if gh release view "$tag" >/dev/null 2>&1; then echo "::warning::release $tag already exists - bump the version in CMakeLists.txt"; exit 0; fi
-          gh release create "$tag" dist/ASB-Setup-*.exe dist/ASB-*-mac.pkg dist/ASB-*-win-vst3.zip dist/ASB-*-mac-vst3.zip \
+          gh release create "$tag" dist/ASB-Setup-*.exe dist/ASB-*-mac.pkg dist/ASB-*-win-vst3.zip dist/ASB-*-mac-vst3.zip dist/ASB-*-mac-au.zip \
             --target "$GITHUB_SHA" --title "ASB $tag" --notes-file notes.md

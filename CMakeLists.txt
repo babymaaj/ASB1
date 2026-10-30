@@ -101,6 +101,24 @@ if(ASB_BUILD_VST3)
     target_link_libraries(ASB PRIVATE "-framework Cocoa" "-framework CoreText" "-framework QuartzCore" "-framework Foundation")
     smtg_target_set_bundle(ASB BUNDLE_IDENTIFIER lol.maai.asb COMPANY_NAME "maai")
   endif()
+  # ---- Audio Unit (macOS, Xcode generator + Apple AudioUnitSDK in third_party/AudioUnitSDK)
+  # The SDK's AU wrapper hosts a copy of ASB.vst3 inside ASB.component: same engine, same window.
+  if(APPLE AND XCODE)
+    set(public_sdk_SOURCE_DIR "${ASB_VST3_SDK_PATH}/public.sdk")
+    include(SMTG_AddVST3AuV2)
+    if(SMTG_ENABLE_AUV2_BUILDS)
+      math(EXPR ASB_AU_VERSION "(${PROJECT_VERSION_MAJOR} << 16) | (${PROJECT_VERSION_MINOR} << 8) | ${PROJECT_VERSION_PATCH}")
+      configure_file(resource/au-info.plist.in ${CMAKE_BINARY_DIR}/au-info.plist @ONLY)
+      smtg_target_add_auv2(ASB_AU
+        BUNDLE_NAME ASB
+        BUNDLE_IDENTIFIER lol.maai.asb.audiounit
+        INFO_PLIST_TEMPLATE ${CMAKE_BINARY_DIR}/au-info.plist
+        VST3_PLUGIN_TARGET ASB)
+    else()
+      message(WARNING "AudioUnitSDK not found (third_party/AudioUnitSDK): AU target skipped")
+    endif()
+  endif()
+
   if(TARGET validator)   # always build it, so it can be run by hand / in CI even with ASB_RUN_VALIDATOR=OFF
     add_dependencies(ASB validator)
   endif()
