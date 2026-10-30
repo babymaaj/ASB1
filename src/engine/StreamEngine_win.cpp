@@ -12,8 +12,9 @@
 #include <ksmedia.h>
 #include <audioclient.h>
 #include <avrt.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
+#include <propkeydef.h>   // DEFINE_PROPERTYKEY: MSVC's devpkey header needs this first (MinGW's includes it itself)
+#include <functiondiscoverykeys_devpkey.h>
 #include <algorithm>
 #include <chrono>
 
