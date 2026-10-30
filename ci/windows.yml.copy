@@ -176,7 +176,7 @@ jobs:
         run: |
           mkdir -p out
           set -o pipefail
-          cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DASB_RUN_VALIDATOR=OFF 2>&1 | tee out/configure-log.txt
+          cmake -S . -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DASB_RUN_VALIDATOR=OFF -DSMTG_DISABLE_CODE_SIGNING=ON 2>&1 | tee out/configure-log.txt
           grep -q "SMTG_AUDIOUNIT_SDK_PATH is set" out/configure-log.txt || { echo "::error::AudioUnitSDK not detected"; exit 1; }
       - name: Build
         run: |

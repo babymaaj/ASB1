@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
-# macOS: universal (arm64 + x86_64) is passed by CI via -DCMAKE_OSX_ARCHITECTURES; minimum macOS 10.15
-set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
+# macOS: universal (arm64 + x86_64) is passed by CI via -DCMAKE_OSX_ARCHITECTURES; minimum macOS 11
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")   # Apple AU SDK + Apple Silicon
 project(ASB VERSION 0.6.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
