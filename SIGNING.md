@@ -17,3 +17,11 @@ GitHub → repo **Settings → Secrets and variables → Actions → New reposit
   validation (individuals: limited regions). Uses an Azure login instead of a .pfx; the CI step would use Microsoft's
   signing action.
 * Note: a new certificate still builds SmartScreen "reputation" over time; signing removes "Unknown publisher" right away.
+
+## macOS
+The Mac build is **ad-hoc signed** (required on Apple Silicon) but not notarized, so macOS shows an "unidentified
+developer" prompt for the .pkg (right-click > Open). Plugins installed by the .pkg load normally in DAWs.
+To remove the prompt: join the Apple Developer Program ($99/year), then add these secrets and the CI step can sign with a
+Developer ID and notarize (`codesign` + `productsign` + `xcrun notarytool`):
+`MAC_CERT_P12_BASE64`, `MAC_CERT_PASSWORD` (Developer ID Application + Installer), `MAC_NOTARY_APPLE_ID`,
+`MAC_NOTARY_TEAM_ID`, `MAC_NOTARY_PASSWORD` (app-specific password). Ask and we'll wire the step in.

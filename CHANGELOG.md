@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0-alpha (2026-10-30)
+* **macOS version** (universal: Apple Silicon + Intel, macOS 10.15+), VST3, installer `ASB-0.6.0-mac.pkg`.
+  * CoreAudio engine: any output device (by its persistent UID), follows the **System default** output when it
+    changes, reopens after a device is unplugged or stalls. Same drift-corrected, lock-free streaming core as Windows.
+  * Same window and settings (accent, size, latency, channels, updates); drawn with CoreGraphics, sharp on Retina.
+  * For Discord / OBS on Mac use the free **BlackHole 2ch** virtual device as ASB's OUTPUT.
+  * Preferences: `~/Library/Application Support/maai/ASB/settings.ini`.
+* The window's logic (layout, meters, settings, clicks) is now one shared implementation for both platforms
+  (`src/ui/EditorCore`), with a thin drawing layer per OS — and it is unit-tested headlessly (`editor_core_tests`).
+* Status text says "your DAW" instead of "FL" (ASB works in any VST3 host).
+
+
 ## 0.5.0-alpha (2026-10-30)
 * **Installer: `ASB-Setup-0.5.0.exe`** (by maai). Installs `ASB.vst3` into the standard VST3 folder, removes the old
   `ASIOStreamBridge.vst3`, offers to close FL if the plugin is in use, adds an uninstaller (Windows Apps), and links to

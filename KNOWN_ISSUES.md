@@ -5,6 +5,8 @@ Fixed in 0.2.0 (see CHANGELOG.md): old #1 compile errors (MinGW-verified; MSVC s
 and fixed: stuck high latency after a device stall, and underruns with big ASIO buffers.
 
 Still open:
+0. **macOS**: VST3 only (no Audio Unit yet, so not for Logic/GarageBand). Not yet tested in a real DAW on a real Mac —
+   CI builds it, validates it, streams through CoreAudio and screenshots the window on a GitHub Mac. Not notarized.
 1. **Never run on a real PC with audio hardware / in FL Studio.** It builds and validates on real Windows (CI), but the CI
    machine has no sound devices, so actual output to a device is only proven under Wine.
 2. Plugin window is Windows-only and fixed-size (no DPI scaling yet: may look small on 150 %+ displays).

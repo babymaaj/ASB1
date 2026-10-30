@@ -1,7 +1,11 @@
-# ASB — ASIO Stream Bridge, by maai (alpha 0.5.0)
+# ASB — ASIO Stream Bridge, by maai (alpha 0.6.0)
 
-**Install:** download `ASB-Setup-x.y.z.exe` from [Releases](https://github.com/babymaaj/ASB1/releases/latest), run it,
-then in FL Studio: Options > Manage plugins > Find plugins, and put **ASB** last on the Master track.
+**Install** from [Releases](https://github.com/babymaaj/ASB1/releases/latest):
+* **Windows:** run `ASB-Setup-x.y.z.exe`. For Discord/OBS use VB-CABLE as ASB's OUTPUT.
+* **macOS:** open `ASB-x.y.z-mac.pkg` (if macOS blocks it: right-click > Open, or System Settings > Privacy & Security >
+  Open Anyway). For Discord/OBS install [BlackHole 2ch](https://existential.audio/blackhole/) and pick it as ASB's OUTPUT.
+
+Then rescan plugins in your DAW (FL Studio: Options > Manage plugins > Find plugins) and put **ASB** last on the Master track.
 
 
 A small VST3 "audio splitter" for FL Studio. Put it on the **master bus**: audio passes through untouched
