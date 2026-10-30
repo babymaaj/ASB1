@@ -1,11 +1,11 @@
 # Build instructions
 
 ## Windows 10/11 x64 (the real target — untested by the author)
-Prereqs: Visual Studio 2022 (MSVC v143, "Desktop development with C++"), CMake ≥ 3.25, Git.
+Prereqs: Visual Studio 2022 or 2026 ("Desktop development with C++"), CMake ≥ 3.25 (≥ 4.2 for VS 2026), Git.
 ```bat
 git clone <this repo> asio-stream-bridge && cd asio-stream-bridge
 git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party\vst3sdk
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake -S . -B build -A x64          :: picks your installed Visual Studio
 cmake --build build --config Release
 ctest --test-dir build -C Release          :: core + state tests
 build\bin\Release\validator.exe build\VST3\Release\ASIOStreamBridge.vst3   :: if the validator target was built

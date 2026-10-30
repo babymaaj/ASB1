@@ -2,25 +2,35 @@ name: windows-build
 on: [push, workflow_dispatch]
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-latest   # Visual Studio 2026 since June 2026; CMake picks the installed VS automatically
     steps:
       - uses: actions/checkout@v4
       - name: Fetch VST3 SDK
         shell: bash
         run: git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party/vst3sdk
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-      - name: Build (also runs the Steinberg validator post-build)
-        run: cmake --build build --config Release 2>&1 | Tee-Object -FilePath build-log.txt
-      - name: Core tests
-        run: ctest --test-dir build -C Release --output-on-failure 2>&1 | Tee-Object -FilePath test-log.txt
-      - name: Package
         shell: bash
         run: |
-          mkdir out
-          cp -r build/VST3/Release/ASIOStreamBridge.vst3 out/ || true
-          cp build/bin/Release/asb_probe.exe out/ 2>/dev/null || cp build/Release/asb_probe.exe out/ || true
-          cp build-log.txt test-log.txt out/ || true
+          mkdir -p out
+          set -o pipefail
+          cmake -S . -B build -A x64 2>&1 | tee out/configure-log.txt
+      - name: Build (also runs the Steinberg validator post-build)
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build --config Release 2>&1 | tee out/build-log.txt
+      - name: Tests (core + state)
+        shell: bash
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C Release --output-on-failure 2>&1 | tee out/test-log.txt
+      - name: Package
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p out
+          cp -r build/VST3/Release/ASIOStreamBridge.vst3 out/ 2>/dev/null || true
+          cp build/bin/Release/asb_probe.exe out/ 2>/dev/null || cp build/Release/asb_probe.exe out/ 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: ASIOStreamBridge-win64, path: out }
