@@ -24,6 +24,16 @@ jobs:
         run: |
           set -o pipefail
           ctest --test-dir build -C Release --output-on-failure 2>&1 | tee out/test-log.txt
+      - name: Surface errors as annotations
+        if: failure()
+        shell: bash
+        run: |
+          # Compiler/linker/test errors as one annotation (readable via the API without downloading logs)
+          cat out/*-log.txt 2>/dev/null | grep -E " error |error C|error LNK|fatal error|CMake Error|FAILED|Failed|Result:" \
+            | sed 's/\r//' | sort -u | head -60 > err.txt || true
+          [ -s err.txt ] || tail -40 out/*-log.txt > err.txt 2>/dev/null || true
+          msg=$(sed 's/%/%25/g' err.txt | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Build/test errors::${msg}"
       - name: Package
         if: always()
         shell: bash
