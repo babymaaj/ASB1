@@ -19,11 +19,13 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build --config Release 2>&1 | tee out/build-log.txt
+          cmake --build build --config Release --target validator 2>&1 | tee -a out/build-log.txt
+          find build -name validator.exe -o -name asb_probe.exe
       - name: Steinberg validator
         shell: bash
         run: |
           set -o pipefail
-          V=$(ls build/bin/Release/validator.exe 2>/dev/null || ls build/bin/validator.exe)
+          V=$(find build -name validator.exe | head -1); echo "validator: $V"
           "$V" -e build/VST3/Release/ASIOStreamBridge.vst3 2>&1 | tee out/validator-log.txt
       - name: Crash stack (validator under cdb)
         if: failure()
@@ -31,14 +33,14 @@ jobs:
         run: |
           CDB="/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe"
           [ -f "$CDB" ] || { echo "cdb not installed"; exit 0; }
-          V=$(ls build/bin/Release/validator.exe 2>/dev/null || ls build/bin/validator.exe)
+          V=$(find build -name validator.exe | head -1); echo "validator: $V"
           "$CDB" -g -G -lines -y "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols;build/VST3/Release/ASIOStreamBridge.vst3/Contents/x86_64-win" \
             -c ".lines -e; .ecxr; kpn 40; r; q" "$V" -e build/VST3/Release/ASIOStreamBridge.vst3 > out/cdb-log.txt 2>&1 || true
           grep -v -E "^ModLoad|^\(.*\): Load module|Symbol search path|Executable search path" out/cdb-log.txt | tail -45 > out/cdbstack-log.txt || true
       - name: Device probe (runner has no real audio device; checks for crashes)
         shell: bash
         run: |
-          P=$(ls build/bin/Release/asb_probe.exe 2>/dev/null || ls build/Release/asb_probe.exe)
+          P=$(find build -name asb_probe.exe | head -1); echo "probe: $P"
           "$P" list 2>&1 | tee out/probe-log.txt
           "$P" 0 3 2>&1 | tee -a out/probe-log.txt
       - name: Tests (core + state)
