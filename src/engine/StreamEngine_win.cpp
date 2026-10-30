@@ -76,31 +76,33 @@ std::vector<DeviceInfo> enumerateRenderDevices()
     std::vector<DeviceInfo> out;
     out.push_back({"", "System default"});
     const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    ComPtr<IMMDeviceEnumerator> en;
-    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
-                                   __uuidof(IMMDeviceEnumerator), (void**)en.put()))) {
-        ComPtr<IMMDeviceCollection> col;
-        if (SUCCEEDED(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, col.put()))) {
-            UINT n = 0; col->GetCount(&n);
-            std::vector<DeviceInfo> devs;
-            for (UINT i = 0; i < n; ++i) {
-                ComPtr<IMMDevice> dev;
-                if (FAILED(col->Item(i, dev.put()))) continue;
-                LPWSTR id = nullptr;
-                if (FAILED(dev->GetId(&id))) continue;
-                DeviceInfo di; di.id = toUtf8(id); CoTaskMemFree(id);
-                ComPtr<IPropertyStore> ps;
-                if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, ps.put()))) {
-                    PROPVARIANT v; PropVariantInit(&v);
-                    if (SUCCEEDED(ps->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR)
-                        di.name = toUtf8(v.pwszVal);
-                    PropVariantClear(&v);
+    {   // every COM object must be released BEFORE CoUninitialize (was a crash on real Windows)
+        ComPtr<IMMDeviceEnumerator> en;
+        if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                       __uuidof(IMMDeviceEnumerator), (void**)en.put()))) {
+            ComPtr<IMMDeviceCollection> col;
+            if (SUCCEEDED(en->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, col.put()))) {
+                UINT n = 0; col->GetCount(&n);
+                std::vector<DeviceInfo> devs;
+                for (UINT i = 0; i < n; ++i) {
+                    ComPtr<IMMDevice> dev;
+                    if (FAILED(col->Item(i, dev.put()))) continue;
+                    LPWSTR id = nullptr;
+                    if (FAILED(dev->GetId(&id))) continue;
+                    DeviceInfo di; di.id = toUtf8(id); CoTaskMemFree(id);
+                    ComPtr<IPropertyStore> ps;
+                    if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, ps.put()))) {
+                        PROPVARIANT v; PropVariantInit(&v);
+                        if (SUCCEEDED(ps->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR)
+                            di.name = toUtf8(v.pwszVal);
+                        PropVariantClear(&v);
+                    }
+                    if (di.name.empty()) di.name = di.id;
+                    devs.push_back(std::move(di));
                 }
-                if (di.name.empty()) di.name = di.id;
-                devs.push_back(std::move(di));
+                std::sort(devs.begin(), devs.end(), [](auto& a, auto& b) { return a.id < b.id; });
+                for (auto& d : devs) out.push_back(std::move(d));
             }
-            std::sort(devs.begin(), devs.end(), [](auto& a, auto& b) { return a.id < b.id; });
-            for (auto& d : devs) out.push_back(std::move(d));
         }
     }
     if (SUCCEEDED(hrInit)) CoUninitialize();
