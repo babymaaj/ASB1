@@ -25,6 +25,16 @@ jobs:
           set -o pipefail
           V=$(ls build/bin/Release/validator.exe 2>/dev/null || ls build/bin/validator.exe)
           "$V" -e build/VST3/Release/ASIOStreamBridge.vst3 2>&1 | tee out/validator-log.txt
+      - name: Crash stack (validator under cdb)
+        if: failure()
+        shell: bash
+        run: |
+          CDB="/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe"
+          [ -f "$CDB" ] || { echo "cdb not installed"; exit 0; }
+          V=$(ls build/bin/Release/validator.exe 2>/dev/null || ls build/bin/validator.exe)
+          "$CDB" -g -G -lines -y "srv*C:\\symbols*https://msdl.microsoft.com/download/symbols;build/VST3/Release/ASIOStreamBridge.vst3/Contents/x86_64-win" \
+            -c ".lines -e; .ecxr; kpn 40; r; q" "$V" -e build/VST3/Release/ASIOStreamBridge.vst3 > out/cdb-log.txt 2>&1 || true
+          grep -v -E "^ModLoad|^\(.*\): Load module|Symbol search path|Executable search path" out/cdb-log.txt | tail -45 > out/cdbstack-log.txt || true
       - name: Device probe (runner has no real audio device; checks for crashes)
         shell: bash
         run: |
@@ -46,7 +56,7 @@ jobs:
           [ -s err.txt ] || tail -40 out/*-log.txt > err.txt 2>/dev/null || true
           msg=$(sed 's/%/%25/g' err.txt | awk '{printf "%s%%0A", $0}')
           echo "::error title=Build/test errors::${msg}"
-          for f in validator probe; do
+          for f in validator cdbstack probe; do
             [ -f out/$f-log.txt ] || continue
             m=$(tail -45 out/$f-log.txt | sed 's/\r//; s/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=$f tail::${m}"

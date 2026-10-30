@@ -12,6 +12,9 @@ if(MSVC)  # one CRT everywhere (static, no VC++ redistributable needed on the us
   set(SMTG_USE_STATIC_CRT ON CACHE BOOL "" FORCE)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
   add_compile_options(/utf-8)   # sources are UTF-8 (MSVC otherwise assumes the system code page)
+  # PDB symbols for Release too, so crashes (CI, users) give readable stack traces. Doesn't change the code.
+  add_compile_options($<$<CONFIG:Release>:/Zi>)
+  add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
 endif()
 
 option(ASB_BUILD_VST3  "Build the VST3 plugin (needs VST3 SDK)" ON)
