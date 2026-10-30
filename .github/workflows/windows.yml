@@ -68,7 +68,20 @@ jobs:
         run: |
           mkdir -p out
           cp -r build/VST3/Release/ASIOStreamBridge.vst3 out/ 2>/dev/null || true
-          cp build/bin/Release/asb_probe.exe out/ 2>/dev/null || cp build/Release/asb_probe.exe out/ 2>/dev/null || true
+          for exe in asb_probe core_tests; do
+            f=$(find build -name "$exe.exe" -path "*Release*" | head -1)
+            [ -n "$f" ] && cp "$f" out/ || echo "::warning::$exe.exe not found"
+          done
+          cat > out/README-FIRST.txt <<'TXT'
+          ASIOStreamBridge.vst3  = the plugin (a folder). Copy the whole folder to C:\Program Files\Common Files\VST3\
+                                   It is not an .exe; FL Studio loads it. Rescan plugins in FL, put it last on the Master track.
+          asb_probe.exe          = test tool. Open Command Prompt in this folder:
+                                     asb_probe.exe list         (shows output devices + numbers)
+                                     asb_probe.exe 2 8          (plays a quiet tone to device 2 for 8 s)
+          core_tests.exe         = self-test; should end with ALL PASSED.
+          *-log.txt              = build logs (send these if something fails).
+          TXT
+          echo "::notice title=Packaged files::$(cd out && find . -type f | sort | tr '\n' ' ')"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: ASIOStreamBridge-win64, path: out }
