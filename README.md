@@ -41,3 +41,10 @@ Buffer Health + Status (read-only meters). State (enable/level/device, saved by 
 
 ## Licenses / dependencies
 VST3 SDK 3.8.1, MIT (Steinberg Media Technologies). Windows system libs only: ole32, avrt, WASAPI/MMDevice. No other third-party code.
+
+## Releasing a new version
+1. Bump the version in `CMakeLists.txt` (`project(ASB VERSION x.y.z)`), `src/vst/Ids.h` (`kVersion`) and `src/vst/asb.rc`,
+   and add a `## x.y.z` section at the top of `CHANGELOG.md`.
+2. Commit to `main` with **`[release]`** in the commit message (or push a tag `vx.y.z`).
+3. CI builds, signs (if a certificate is configured, see `SIGNING.md`), and publishes `ASB-Setup-x.y.z.exe` on
+   GitHub Releases. Installed plugins see the update within a day (or via Settings > Updates > CHECK).

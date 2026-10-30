@@ -20,6 +20,12 @@ jobs:
         run: |
           v=$(grep -oP 'project\(ASB VERSION \K[0-9.]+' CMakeLists.txt)
           echo "version=$v" >> "$GITHUB_OUTPUT"
+          # release when: a v* tag is pushed, OR a commit on main says [release] in its message
+          rel=false
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then rel=true; fi
+          if [[ "$GITHUB_REF" == refs/heads/main ]] && git log -1 --format=%B | grep -q '\[release\]'; then rel=true; fi
+          echo "release=$rel" >> "$GITHUB_OUTPUT"
+          echo "tag=v$v" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF#refs/tags/v}" != "$v"* ]]; then
             echo "::error::tag ${GITHUB_REF#refs/tags/} does not match CMake version $v"; exit 1
           fi
@@ -150,7 +156,7 @@ jobs:
         if: success()
         with: { name: ASB-Setup, path: dist }
       - name: Publish GitHub Release
-        if: success() && startsWith(github.ref, 'refs/tags/v')
+        if: success() && steps.ver.outputs.release == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,5 +166,7 @@ jobs:
           awk -v v="$v" '$0 ~ "^## "v {f=1; next} /^## / && f {exit} f' CHANGELOG.md > notes.md
           printf '\n---\n**Install:** download ASB-Setup-%s.exe below and run it. Then in FL Studio: Options > Manage plugins > Find plugins.\n' "$v" >> notes.md
           (cd out && 7z a -tzip "../dist/ASB-$v-vst3.zip" ASB.vst3 >/dev/null)
-          gh release create "${GITHUB_REF#refs/tags/}" dist/ASB-Setup-*.exe "dist/ASB-$v-vst3.zip" \
-            --title "ASB ${GITHUB_REF#refs/tags/}" --notes-file notes.md
+          tag="${{ steps.ver.outputs.tag }}"
+          if gh release view "$tag" >/dev/null 2>&1; then echo "::warning::release $tag already exists - bump the version in CMakeLists.txt"; exit 0; fi
+          gh release create "$tag" dist/ASB-Setup-*.exe "dist/ASB-$v-vst3.zip" \
+            --target "$GITHUB_SHA" --title "ASB $tag" --notes-file notes.md
