@@ -1,0 +1,36 @@
+name: maintenance
+# One-off repo maintenance, triggered by a commit on main whose message contains [retag].
+#  - re-points each release tag vX.Y.Z to the commit on main titled "ASB X.Y.Z..." (after a history rewrite)
+#  - deletes workflow runs whose commit is no longer part of main
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  actions: write
+jobs:
+  retag:
+    if: contains(github.event.head_commit.message, '[retag]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Re-point release tags
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          git config user.name "maai" && git config user.email "maai@users.noreply.github.com"
+          for tag in $(git ls-remote --tags origin 'v*' | awk '{print $2}' | sed 's#refs/tags/##; s#\^{}##' | sort -u); do
+            v="${tag#v}"
+            sha=$(git log main --format='%H %s' | grep -E "^[0-9a-f]+ ASB ${v//./\\.}([: ]|$)" | head -1 | cut -d' ' -f1)
+            if [ -z "$sha" ]; then echo "::warning::no commit found for $tag"; continue; fi
+            echo "$tag -> $sha"
+            git tag -f "$tag" "$sha"
+            git push -f origin "refs/tags/$tag"
+          done
+      - name: Delete runs from the old history
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          git rev-list main > keep.txt
+          gh run list --limit 500 --json databaseId,headSha --jq '.[] | "\(.databaseId) \(.headSha)"' | while read id sha; do
+            if ! grep -q "^$sha$" keep.txt; then echo "delete run $id ($sha)"; gh run delete "$id" || true; fi
+          done
