@@ -1,3 +1,4 @@
 build/
-third_party/vst3sdk/
+third_party/vst3sdk
 build-*/
+*.bmp
