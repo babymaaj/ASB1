@@ -121,7 +121,8 @@ int main(int argc, char** argv)
     });
 
     IPlugView* view = ctl->createView(ViewType::kEditor);
-    if (!view) { std::printf("no editor\n"); return 1; }
+    auto bail = [&](const char* why) { std::printf("%s\n", why); run = false; audio.join(); return 1; };
+    if (!view) return bail("no editor");
     ViewRect vr; view->getSize(&vr);
     RECT wr{0, 0, vr.getWidth(), vr.getHeight()};
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
@@ -129,7 +130,7 @@ int main(int argc, char** argv)
                                  100, 100, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     static PreviewFrame pf; pf.hwnd = frame;
     view->setFrame(&pf);
-    if (view->attached(frame, kPlatformTypeHWND) != kResultOk) { std::printf("attach failed\n"); return 1; }
+    if (!frame || view->attached(frame, kPlatformTypeHWND) != kResultOk) return bail("attach failed (no display?)");
 
     const ULONGLONG t0 = GetTickCount64();
     MSG m;

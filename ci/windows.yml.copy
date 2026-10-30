@@ -1,4 +1,4 @@
-name: windows-build
+name: build
 on:
   push:
     branches: ['**']
@@ -8,7 +8,12 @@ permissions:
   contents: write         # screenshots branch + releases
 jobs:
   build:
-    runs-on: windows-latest   # Visual Studio 2026 since June 2026; CMake picks the installed VS automatically
+    name: windows
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      release: ${{ steps.ver.outputs.release }}
+      tag: ${{ steps.ver.outputs.tag }}   # Visual Studio 2026 since June 2026; CMake picks the installed VS automatically
     steps:
       - uses: actions/checkout@v4
       - name: Fetch VST3 SDK
@@ -155,18 +160,117 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with: { name: ASB-Setup, path: dist }
-      - name: Publish GitHub Release
-        if: success() && steps.ver.outputs.release == 'true'
-        shell: bash
+
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch VST3 SDK
+        run: git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party/vst3sdk
+      - name: Version
+        id: ver
+        run: echo "version=$(grep -oE 'project\(ASB VERSION [0-9.]+' CMakeLists.txt | grep -oE '[0-9.]+$')" >> "$GITHUB_OUTPUT"
+      - name: Configure (universal arm64 + x86_64)
+        run: |
+          mkdir -p out
+          set -o pipefail
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DASB_RUN_VALIDATOR=OFF 2>&1 | tee out/configure-log.txt
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build build --config Release -j 4 2>&1 | tee out/build-log.txt
+          find build -name "ASB.vst3" -maxdepth 4
+          lipo -info build/VST3/Release/ASB.vst3/Contents/MacOS/ASB
+      - name: Steinberg validator
+        run: |
+          set -o pipefail
+          V=$(find build -name validator -type f -perm +111 | head -1); echo "validator: $V"
+          "$V" -e build/VST3/Release/ASB.vst3 2>&1 | tee out/validator-log.txt
+      - name: Device probe
+        run: |
+          P=$(find build -name asb_probe -type f -perm +111 | head -1)
+          "$P" list 2>&1 | tee out/probe-log.txt
+          "$P" 0 3 2>&1 | tee -a out/probe-log.txt || true
+      - name: Tests (core + state + editor core)
+        run: |
+          set -o pipefail
+          ctest --test-dir build -C Release --output-on-failure 2>&1 | tee out/test-log.txt
+      - name: UI screenshots (real macOS) -> ci-screenshots-mac branch
+        if: github.ref == 'refs/heads/main'
+        continue-on-error: true
+        run: |
+          E=$(find build -name editor_preview_mac -type f -perm +111 | head -1)
+          "$E" ui.png 3000 --stream || true
+          "$E" ui-off.png 2500 || true
+          ASB_PREVIEW_PAGE=settings "$E" ui-settings.png 2500 || true
+          ls -la ui*.png || exit 0
+          mkdir shots && mv ui*.png shots/
+          cd shots
+          git init -q && git checkout -q -b ci-screenshots-mac
+          git config user.name "ci" && git config user.email "ci@users.noreply.github.com"
+          git add -A && git commit -qm "macOS UI screenshots for ${GITHUB_SHA}"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" ci-screenshots-mac
+      - name: Surface errors as annotations
+        if: failure()
+        run: |
+          cat out/*-log.txt 2>/dev/null | grep -E "error:|Error |FAILED|Failed|Result:|ld: " | sort -u | head -60 > err.txt || true
+          [ -s err.txt ] || tail -40 out/*-log.txt > err.txt 2>/dev/null || true
+          msg=$(sed 's/%/%25/g' err.txt | awk '{printf "%s%%0A", $0}')
+          echo "::error title=macOS build/test errors::${msg}"
+          for f in validator probe; do
+            [ -f out/$f-log.txt ] || continue
+            m=$(tail -45 out/$f-log.txt | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=mac $f tail::${m}"
+          done
+      - name: Package (.pkg installer, ad-hoc signed)
+        if: success()
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          mkdir -p dist pkgroot/Library/Audio/Plug-Ins/VST3
+          cp -R build/VST3/Release/ASB.vst3 pkgroot/Library/Audio/Plug-Ins/VST3/
+          # Ad-hoc signature (required for Apple Silicon). A Developer ID signature + notarization replaces this
+          # once an Apple Developer account is set up (see SIGNING.md).
+          codesign --force --deep --sign - pkgroot/Library/Audio/Plug-Ins/VST3/ASB.vst3
+          codesign --verify --deep --strict pkgroot/Library/Audio/Plug-Ins/VST3/ASB.vst3
+          pkgbuild --root pkgroot --identifier lol.maai.asb.vst3 --version "$v" --install-location / dist/asb-vst3.pkg
+          productbuild --package dist/asb-vst3.pkg --identifier lol.maai.asb --version "$v" "dist/ASB-$v-mac.pkg"
+          rm dist/asb-vst3.pkg
+          (cd pkgroot/Library/Audio/Plug-Ins/VST3 && zip -qry "$GITHUB_WORKSPACE/dist/ASB-$v-mac-vst3.zip" ASB.vst3)
+          cp -R build/VST3/Release/ASB.vst3 out/ 2>/dev/null || true
+          ls -la dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: ASB-mac, path: out }
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with: { name: ASB-mac-installer, path: dist }
+
+  release:
+    needs: [build, mac]
+    if: needs.build.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: ASB-Setup, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: ASB-mac-installer, path: dist }
+      - uses: actions/download-artifact@v4
+        with: { name: ASB-win64, path: win }
+      - name: Publish GitHub Release (Windows + macOS)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          v="${{ steps.ver.outputs.version }}"
-          # release notes = this version's section of CHANGELOG.md
+          v="${{ needs.build.outputs.version }}"; tag="${{ needs.build.outputs.tag }}"
           awk -v v="$v" '$0 ~ "^## "v {f=1; next} /^## / && f {exit} f' CHANGELOG.md > notes.md
-          printf '\n---\n**Install:** download ASB-Setup-%s.exe below and run it. Then in FL Studio: Options > Manage plugins > Find plugins.\n' "$v" >> notes.md
-          (cd out && 7z a -tzip "../dist/ASB-$v-vst3.zip" ASB.vst3 >/dev/null)
-          tag="${{ steps.ver.outputs.tag }}"
+          cat >> notes.md <<EOF2
+
+          ---
+          **Windows:** run \`ASB-Setup-$v.exe\`, then in FL Studio: Options > Manage plugins > Find plugins.
+          **macOS:** open \`ASB-$v-mac.pkg\` (if macOS blocks it: right-click > Open, or System Settings > Privacy & Security > Open Anyway), then rescan plugins in your DAW. For Discord/OBS on Mac install the free [BlackHole 2ch](https://existential.audio/blackhole/) and pick it as ASB's OUTPUT.
+          EOF2
+          (cd win && zip -qr "../dist/ASB-$v-win-vst3.zip" ASB.vst3)
+          ls -la dist
           if gh release view "$tag" >/dev/null 2>&1; then echo "::warning::release $tag already exists - bump the version in CMakeLists.txt"; exit 0; fi
-          gh release create "$tag" dist/ASB-Setup-*.exe "dist/ASB-$v-vst3.zip" \
+          gh release create "$tag" dist/ASB-Setup-*.exe dist/ASB-*-mac.pkg dist/ASB-*-win-vst3.zip dist/ASB-*-mac-vst3.zip \
             --target "$GITHUB_SHA" --title "ASB $tag" --notes-file notes.md
