@@ -168,7 +168,7 @@ jobs:
       - name: Fetch VST3 SDK + Apple AudioUnitSDK
         run: |
           git clone --depth 1 --recursive --shallow-submodules https://github.com/steinbergmedia/vst3sdk.git third_party/vst3sdk
-          git clone --depth 1 https://github.com/apple/AudioUnitSDK.git third_party/AudioUnitSDK
+          git clone --depth 1 -b AudioUnitSDK-1.1.0 https://github.com/apple/AudioUnitSDK.git third_party/AudioUnitSDK   # 1.4+ needs C++23; the VST3 AU wrapper is C++17
       - name: Version
         id: ver
         run: echo "version=$(grep -oE 'project\(ASB VERSION [0-9.]+' CMakeLists.txt | grep -oE '[0-9.]+$')" >> "$GITHUB_OUTPUT"
