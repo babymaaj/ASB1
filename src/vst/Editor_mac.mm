@@ -235,7 +235,7 @@ public:
         if (isPlatformTypeSupported(type) != kResultTrue || !parent) return kResultFalse;
         view_ = [[ASBView alloc] initWithFrame:NSMakeRect(0, 0, core_.pixelWidth(), core_.pixelHeight())];
         view_->owner = this;
-        [static_cast<NSView*>(parent) addSubview:view_];
+        [(__bridge NSView*)parent addSubview:view_];
         __weak ASBView* weakView = view_;
         timer_ = [NSTimer timerWithTimeInterval:kFrameMs / 1000.0 repeats:YES block:^(NSTimer*) {
             ASBView* v = weakView;
